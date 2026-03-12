@@ -1,3 +1,4 @@
+print("DocMind server starting...")
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -30,6 +31,16 @@ logging.set_verbosity_error()
 BASE_DIR = Path(__file__).parent
 
 app = FastAPI()
+embeddings = None
+
+@app.on_event("startup")
+async def startup_event():
+    global embeddings
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        encode_kwargs={"batch_size": 64, "normalize_embeddings": True},
+    )
+    print("Embeddings loaded")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
