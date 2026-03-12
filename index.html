@@ -1,0 +1,1384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DocMind</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;600;800&display=swap" rel="stylesheet"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#0d0f12;
+      --surface:#13161b;
+      --surface2:#181c22;
+      --border:#1e2530;
+      --border-bright:#2a3340;
+      --accent:#00e5c0;
+      --accent-dim:#00b89a;
+      --accent-glow:rgba(0,229,192,.12);
+      --accent-glow2:rgba(0,229,192,.06);
+      --muted:#4a5568;
+      --muted2:#6b7a8d;
+      --text:#c8d6e5;
+      --text-bright:#e8f0fa;
+      --red:#ff4d6a;
+      --red-dim:rgba(255,77,106,.12);
+      --yellow:#f0b429;
+      --blue:#4d9fff;
+      --blue-dim:rgba(77,159,255,.1);
+      --mono:'Space Mono',monospace;
+      --sans:'Syne',sans-serif;
+    }
+
+    body{
+      background:var(--bg);
+      color:var(--text);
+      font-family:var(--mono);
+      font-size:13px;
+      min-height:100vh;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0,229,192,.06) 0%, transparent 60%),
+        linear-gradient(180deg, #0a0d10 0%, #0d0f12 100%);
+    }
+
+    /* ── Topbar ── */
+    .topbar{
+      background:var(--surface);
+      border-bottom:1px solid var(--border);
+      padding:0 28px;
+      height:52px;
+      display:flex;
+      align-items:center;
+      gap:16px;
+      position:relative;
+      z-index:10;
+    }
+    .topbar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.4}
+    .topbar-logo{font-family:var(--sans);font-size:18px;font-weight:800;letter-spacing:-.02em;color:var(--text-bright)}
+    .topbar-logo em{font-style:normal;color:var(--accent);text-shadow:0 0 20px rgba(0,229,192,.5)}
+    .topbar-sep{width:1px;height:18px;background:var(--border-bright)}
+    .topbar-sub{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);font-family:var(--mono)}
+
+    /* ── Upload overlay ── */
+    .upload-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:1000;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px}
+    .upload-overlay.show{display:flex}
+    .upload-overlay-box{background:var(--surface2);border:1px solid var(--border-bright);border-radius:16px;padding:32px 40px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;min-width:300px;box-shadow:0 0 60px rgba(0,229,192,.08),0 24px 64px rgba(0,0,0,.6)}
+    .upload-spinner{width:40px;height:40px;border:2px solid var(--border-bright);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;box-shadow:0 0 16px var(--accent-glow)}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .upload-overlay-title{font-family:var(--sans);font-size:16px;font-weight:600;color:var(--text-bright)}
+    .upload-overlay-sub{font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+    .upload-progress-steps{display:flex;flex-direction:column;gap:8px;width:100%;margin-top:4px}
+    .upload-step-row{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted);transition:color .3s}
+    .upload-step-row.active{color:var(--accent)}
+    .upload-step-row.done{color:var(--muted2)}
+    .upload-step-dot{width:6px;height:6px;border-radius:50%;background:var(--border-bright);flex-shrink:0;transition:background .3s}
+    .upload-step-row.active .upload-step-dot{background:var(--accent);box-shadow:0 0 8px var(--accent);animation:pulse .8s infinite}
+    .upload-step-row.done .upload-step-dot{background:var(--muted2)}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+    /* ── Confirm dialog ── */
+    .confirm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:1100;display:none;align-items:center;justify-content:center}
+    .confirm-overlay.show{display:flex}
+    .confirm-box{background:var(--surface2);border:1px solid var(--border-bright);border-radius:12px;padding:28px 32px;max-width:380px;width:90%;box-shadow:0 24px 64px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:14px}
+    .confirm-title{font-size:13px;font-weight:700;color:var(--text-bright);font-family:var(--sans);letter-spacing:.01em}
+    .confirm-msg{font-size:12px;color:var(--muted2);line-height:1.75}
+    .confirm-msg strong{color:var(--text-bright)}
+    .confirm-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+    .confirm-btn-cancel{padding:7px 16px;border:1px solid var(--border-bright);border-radius:6px;background:none;font-family:var(--mono);font-size:11px;color:var(--muted2);cursor:pointer;transition:all .15s}
+    .confirm-btn-cancel:hover{border-color:var(--muted2);color:var(--text)}
+    .confirm-btn-swap{padding:7px 16px;border:1px solid var(--accent);border-radius:6px;background:var(--accent-glow);color:var(--accent);font-family:var(--mono);font-size:11px;cursor:pointer;transition:all .15s}
+    .confirm-btn-swap:hover{background:var(--accent);color:#000}
+
+    /* ── Layout ── */
+    .layout{display:grid;grid-template-columns:270px 1fr;height:calc(100vh - 52px);overflow:hidden;min-width:0}
+
+    /* ── Left sidebar ── */
+    .left{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+    .panel-head{padding:0 18px;height:44px;border-bottom:1px solid var(--border);font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between;align-items:center;font-family:var(--mono)}
+    .badge{background:var(--accent-glow);color:var(--accent);font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid rgba(0,229,192,.2);font-family:var(--mono)}
+
+    .upload-zone{margin:12px;border:1px dashed var(--border-bright);border-radius:10px;padding:16px 14px;text-align:center;cursor:pointer;transition:all .2s;background:var(--accent-glow2)}
+    .upload-zone:hover,.upload-zone.dragover{border-color:var(--accent);background:var(--accent-glow);box-shadow:0 0 20px var(--accent-glow)}
+    .upload-icon{font-size:20px;margin-bottom:6px;opacity:.6}
+    .upload-label{font-size:11px;color:var(--muted2);line-height:1.6}
+    .upload-label strong{color:var(--text)}
+    #file{display:none}
+    .btn-upload{margin:0 12px 4px;width:calc(100% - 24px);padding:9px;background:var(--accent);color:#000;border:none;border-radius:6px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px;letter-spacing:.04em}
+    .btn-upload:hover{background:var(--text-bright);box-shadow:0 0 24px rgba(0,229,192,.3)}
+    .btn-upload:disabled{opacity:.25;cursor:not-allowed;box-shadow:none}
+    .upload-status{margin:4px 12px 8px;font-size:11px;min-height:15px}
+    .upload-status.ok{color:var(--accent)}.upload-status.err{color:var(--red)}
+
+    .doc-list{flex:1;overflow-y:auto;padding:0 6px 12px}
+    .doc-list::-webkit-scrollbar{width:2px}
+    .doc-list::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+    .btn-all{width:100%;padding:7px 10px;margin-bottom:2px;background:none;border:1px solid transparent;border-radius:6px;font-family:var(--mono);font-size:11px;color:var(--muted);cursor:pointer;text-align:left;transition:all .15s}
+    .btn-all:hover{color:var(--text);background:var(--surface2)}
+    .btn-all.active{border-color:var(--border-bright);color:var(--accent);background:var(--accent-glow2)}
+    .doc-row{display:flex;align-items:center;gap:7px;padding:8px 10px;border-radius:6px;cursor:pointer;margin-bottom:2px;border:1px solid transparent;transition:all .15s}
+    .doc-row:hover{background:var(--surface2)}
+    .doc-row.active{background:var(--accent-glow);border-color:rgba(0,229,192,.2);box-shadow:inset 3px 0 0 var(--accent)}
+    .doc-icon{color:var(--accent);flex-shrink:0;opacity:.7}
+    .doc-info{flex:1;min-width:0;overflow:hidden}
+    .doc-name{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:145px;color:var(--text)}
+    .doc-meta{font-size:10px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .doc-del{background:none;border:none;color:var(--border-bright);cursor:pointer;font-size:15px;line-height:1;padding:0 2px;transition:color .15s;flex-shrink:0}
+    .doc-del:hover{color:var(--red)}
+    .empty-docs{padding:20px 14px;text-align:center;color:var(--muted);font-size:11px;line-height:2}
+
+    /* ── Right main ── */
+    .right{display:flex;flex-direction:column;overflow:hidden;background:var(--bg);min-width:0}
+    .tabs{display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;overflow-x:auto;flex-shrink:0;height:44px;gap:2px}
+    .tabs::-webkit-scrollbar{display:none}
+    .tab{padding:0 14px;height:44px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:all .15s;user-select:none;display:flex;align-items:center;gap:6px;font-family:var(--mono)}
+    .tab-icon{font-size:13px;transition:transform .15s;opacity:.5}
+    .tab:hover .tab-icon{opacity:1;transform:translateY(-1px)}
+    .tab:hover{color:var(--text)}
+    .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:700}
+    .tab.active .tab-icon{opacity:1}
+
+    /* Tab panels */
+    .tab-panel{display:none;flex:1;flex-direction:column;overflow:hidden;min-width:0}
+    .tab-panel.active{display:flex}
+
+    /* ── Chat tab ── */
+    .chat-header{padding:10px 20px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;min-height:44px}
+    .active-tag{display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;background:var(--accent-glow);border:1px solid rgba(0,229,192,.25);font-size:10px;color:var(--accent);max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700;letter-spacing:.04em}
+    .scope-hint{font-size:10px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+    .spacer{flex:1}
+    .btn-sm{font-size:10px;color:var(--muted);background:none;border:none;cursor:pointer;font-family:var(--mono);transition:color .15s;letter-spacing:.04em}
+    .btn-sm:hover{color:var(--red)}
+
+    .summary-strip{margin:10px 20px 0;padding:10px 14px;background:var(--surface);border:1px solid var(--border-bright);border-left:2px solid var(--accent);border-radius:6px;font-size:11px;color:var(--muted2);line-height:1.75;display:none;flex-shrink:0;word-break:break-word;overflow-wrap:break-word}
+    .summary-strip.show{display:block}
+    .summary-strip strong{color:var(--accent);font-size:9px;letter-spacing:.15em;text-transform:uppercase;display:block;margin-bottom:4px;opacity:.8}
+
+    .qa-section{margin:8px 20px 0;display:none;flex-shrink:0;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+    .qa-section.show{display:block}
+    .qa-section-head{display:flex;justify-content:space-between;align-items:center;padding:8px 13px;cursor:pointer;user-select:none;border-bottom:1px solid var(--border)}
+    .qa-section-head:hover{background:var(--surface2)}
+    .qa-chips{display:flex;flex-direction:column;gap:4px;padding:8px 12px 10px;overflow-y:auto}
+    .qa-chips::-webkit-scrollbar{width:2px}
+    .qa-chips::-webkit-scrollbar-thumb{background:var(--border-bright)}
+    .qa-collapsed .qa-chips{display:none}
+    .chip{padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text);background:var(--surface2);cursor:pointer;transition:all .15s;font-family:var(--mono);text-align:left;width:100%;white-space:normal;overflow-wrap:break-word;line-height:1.6}
+    .chip:hover{border-color:var(--accent);background:var(--accent-glow);color:var(--accent)}
+
+    .chat-messages{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:14px}
+    .chat-messages::-webkit-scrollbar{width:3px}
+    .chat-messages::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+    .empty-chat{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--muted);text-align:center;font-size:12px}
+    .empty-chat .big{font-family:var(--sans);font-size:32px;font-weight:800;color:var(--border-bright);letter-spacing:-.03em}
+    .empty-chat p{max-width:240px;line-height:1.9;color:var(--muted)}
+
+    .msg{display:flex;flex-direction:column;gap:4px;animation:up .2s ease both}
+    @keyframes up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    .msg-who{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);padding:0 2px}
+    .msg.user .msg-who{color:var(--blue)}.msg.ai .msg-who{color:var(--accent)}
+    .msg-body{padding:12px 15px;border-radius:8px;font-size:13px;line-height:1.8;border:1px solid var(--border);word-break:break-word;overflow-wrap:break-word}
+    .msg.user .msg-body{background:var(--surface2);border-color:var(--border-bright)}
+    .msg.ai .msg-body{background:var(--surface);border-color:var(--border)}
+    .msg.err .msg-body{background:var(--red-dim);border-color:rgba(255,77,106,.3);color:var(--red)}
+    .msg-body p{margin-bottom:8px}.msg-body p:last-child{margin-bottom:0}
+
+    .source-box{margin-top:8px;padding:10px 13px;background:var(--surface2);border:1px solid var(--border-bright);border-left:2px solid var(--accent);border-radius:6px}
+    .source-label{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:5px;opacity:.7}
+    .source-excerpt{font-size:11px;color:var(--muted2);line-height:1.7;font-style:italic;word-break:break-word;overflow-wrap:break-word}
+    .source-meta{font-size:10px;color:var(--accent);margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;opacity:.8}
+    .page-tag{background:var(--accent-glow);border:1px solid rgba(0,229,192,.2);padding:1px 8px;border-radius:3px}
+
+    .conf-row{display:flex;align-items:center;gap:8px;margin-top:8px}
+    .conf-track{flex:1;max-width:80px;height:2px;background:var(--border-bright);border-radius:1px;overflow:hidden}
+    .conf-fill{height:100%;border-radius:1px}
+    .conf-text{font-size:10px;color:var(--muted2)}
+
+    .passages-btn{margin-top:6px;background:none;border:none;font-family:var(--mono);font-size:10px;color:var(--muted);cursor:pointer;padding:0;letter-spacing:.06em;transition:color .15s}
+    .passages-btn:hover{color:var(--text)}
+    .passages-wrap{margin-top:7px;display:none;flex-direction:column;gap:5px}
+    .passages-wrap.open{display:flex}
+    .passage{padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--muted2);line-height:1.7;background:var(--surface2)}
+    .passage-meta{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+    .passage-pct{font-size:10px}
+    .passage-pg{font-size:10px;color:var(--accent);background:var(--accent-glow);padding:1px 7px;border-radius:3px;opacity:.8}
+    .passage-fn{font-size:10px;color:var(--muted)}
+
+    .rerank-bar{margin-top:9px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:7px}
+    .rerank-label{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+    .rerank-chips{display:flex;flex-wrap:wrap;gap:5px}
+    .rerank-chip{padding:3px 10px;border:1px solid var(--border-bright);border-radius:4px;font-size:10px;color:var(--muted2);background:none;cursor:pointer;font-family:var(--mono);transition:all .15s;letter-spacing:.03em}
+    .rerank-chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}
+
+    .export-row{margin-top:7px;display:flex;gap:5px;align-items:center}
+    .export-btn{padding:3px 9px;border:1px solid var(--border);border-radius:4px;font-size:10px;font-family:var(--mono);color:var(--muted);background:none;cursor:pointer;transition:all .15s;letter-spacing:.03em}
+    .export-btn:hover{border-color:var(--blue);color:var(--blue)}
+    .export-label{font-size:9px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+
+    .typing-dots{display:flex;gap:5px;align-items:center;padding:4px 2px}
+    .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:.3;animation:blink 1.2s infinite}
+    .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+    @keyframes blink{0%,80%,100%{opacity:.2;transform:scale(.85)}40%{opacity:1;transform:scale(1.15)}}
+
+    .input-row{padding:10px 20px 16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:flex-end;flex-shrink:0}
+    textarea#q{flex:1;background:var(--surface2);border:1px solid var(--border-bright);border-radius:8px;padding:10px 14px;color:var(--text-bright);font-family:var(--mono);font-size:13px;outline:none;resize:none;transition:all .2s;line-height:1.5}
+    textarea#q:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+    textarea#q::placeholder{color:var(--muted)}
+    .btn-icon{width:38px;height:38px;border:1px solid var(--border-bright);border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--surface2);color:var(--muted2);transition:all .15s}
+    .btn-icon:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}
+    .btn-icon.recording{background:var(--red-dim);color:var(--red);border-color:rgba(255,77,106,.4)}
+    .btn-ask{width:38px;height:38px;background:var(--accent);color:#000;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s}
+    .btn-ask:hover{background:var(--text-bright);box-shadow:0 0 20px rgba(0,229,192,.3)}
+    .btn-ask:active{transform:scale(.95)}.btn-ask:disabled{opacity:.25;cursor:not-allowed;box-shadow:none}
+
+    /* ── Search tab ── */
+    .search-header{padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+    .search-input-row{display:flex;gap:8px;align-items:center}
+    .search-filter-row{display:flex;gap:8px;align-items:center}
+    .search-filter-label{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+    .search-filter-btn{flex:1;background:var(--surface2);border:1px solid var(--border-bright);border-radius:6px;padding:6px 12px;font-family:var(--mono);font-size:11px;color:var(--text);cursor:pointer;text-align:left;display:flex;justify-content:space-between;align-items:center;transition:all .2s;white-space:nowrap;overflow:hidden}
+    .search-filter-btn:hover,.search-filter-btn.open{border-color:var(--accent);color:var(--accent)}
+    .search-filter-btn-text{overflow:hidden;text-overflow:ellipsis;flex:1}
+    .search-filter-dropdown{position:absolute;z-index:200;background:var(--surface2);border:1px solid var(--border-bright);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.5);min-width:220px;max-height:220px;overflow-y:auto;display:none;flex-direction:column}
+    .search-filter-dropdown.open{display:flex}
+    .search-filter-dropdown::-webkit-scrollbar{width:2px}
+    .search-filter-dropdown::-webkit-scrollbar-thumb{background:var(--border-bright)}
+    .search-filter-item{display:flex;align-items:center;gap:9px;padding:8px 13px;cursor:pointer;font-size:11px;color:var(--text);transition:background .1s;user-select:none}
+    .search-filter-item:hover{background:var(--surface)}
+    .search-filter-item input[type=checkbox]{accent-color:var(--accent);width:13px;height:13px;cursor:pointer;flex-shrink:0}
+    .search-filter-item-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .search-filter-item.all-opt{border-bottom:1px solid var(--border);font-weight:700;color:var(--accent)}
+    .search-count{font-size:10px;color:var(--muted);margin-left:auto;white-space:nowrap}
+    .search-input{flex:1;background:var(--surface2);border:1px solid var(--border-bright);border-radius:8px;padding:9px 14px;color:var(--text-bright);font-family:var(--mono);font-size:13px;outline:none;transition:all .2s}
+    .search-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+    .search-input::placeholder{color:var(--muted)}
+    .btn-search{padding:9px 18px;background:var(--accent);color:#000;border:none;border-radius:8px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;transition:all .2s;white-space:nowrap;letter-spacing:.04em}
+    .btn-search:hover{background:var(--text-bright);box-shadow:0 0 20px rgba(0,229,192,.3)}
+    .search-results{flex:1;overflow-y:auto;overflow-x:hidden;padding:16px 20px;display:flex;flex-direction:column;gap:10px;min-width:0;box-sizing:border-box}
+    .search-results::-webkit-scrollbar{width:3px}
+    .search-results::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+    .search-hit{background:var(--surface);border:1px solid var(--border);border-radius:8px;transition:all .15s;width:100%;min-width:0;box-sizing:border-box}
+    .search-hit:hover{border-color:rgba(0,229,192,.3);box-shadow:0 0 20px var(--accent-glow2)}
+    .search-hit-header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface2);flex-wrap:wrap;min-width:0;box-sizing:border-box;border-radius:7px 7px 0 0}
+    .search-hit-rank{width:20px;height:20px;border-radius:3px;background:var(--accent-glow);border:1px solid rgba(0,229,192,.3);color:var(--accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .search-hit-file{font-size:11px;color:var(--text-bright);font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .search-hit-page{font-size:10px;color:var(--accent);background:var(--accent-glow);padding:2px 8px;border-radius:3px;border:1px solid rgba(0,229,192,.2);white-space:nowrap;flex-shrink:0}
+    .search-hit-conf-bar{display:flex;align-items:center;gap:6px;flex-shrink:0}
+    .search-hit-conf-track{width:48px;height:3px;background:var(--border-bright);border-radius:1px;overflow:hidden}
+    .search-hit-conf-fill{height:100%;border-radius:1px}
+    .search-hit-conf-pct{font-size:10px;color:var(--muted2);white-space:nowrap}
+    .search-hit-body{padding:12px 14px;min-width:0;width:100%;box-sizing:border-box}
+    .search-hit-text{font-size:12px;color:var(--text);line-height:1.9;white-space:normal;word-break:break-word;overflow-wrap:anywhere;overflow:hidden;position:relative;transition:max-height .3s ease}
+    .search-hit-text.clamped{max-height:68px}
+    .search-hit-text.clamped::after{content:'';position:absolute;bottom:0;left:0;right:0;height:32px;background:linear-gradient(transparent,var(--surface));pointer-events:none}
+    .search-hit-text.expanded{max-height:4000px}
+    .search-hit-expand{background:none;border:none;font-family:var(--mono);font-size:10px;color:var(--accent);cursor:pointer;padding:6px 0 0;letter-spacing:.06em;display:block;opacity:.7}
+    .search-hit-expand:hover{opacity:1}
+    .search-hit-keyword{background:rgba(240,180,41,.15);color:var(--yellow);border-radius:2px;padding:0 2px}
+    .search-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);font-size:12px;gap:8px}
+    .search-empty .big{font-family:var(--sans);font-size:28px;font-weight:800;color:var(--border-bright)}
+
+    /* ── Summary & Info tab ── */
+    .info-scroll{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px;align-items:stretch}
+    .info-scroll::-webkit-scrollbar{width:3px}
+    .info-scroll::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+    .info-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:visible}
+    .info-card-head{padding:11px 15px;border-bottom:1px solid var(--border);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+    .info-card-body{padding:14px 15px;font-size:13px;line-height:1.75;color:var(--text);overflow-y:auto;max-height:none}
+    .info-card-body p{margin-bottom:8px}.info-card-body p:last-child{margin-bottom:0}
+    .bullet-list{list-style:none;display:flex;flex-direction:column;gap:7px}
+    .bullet-list li{display:flex;gap:8px;font-size:12px;line-height:1.65;color:var(--text)}
+    .bullet-list li::before{content:'▸';color:var(--accent);flex-shrink:0;font-size:12px;margin-top:1px;opacity:.7}
+    .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .info-entity-group{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px 13px}
+    .info-entity-label{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+    .info-entity-items{display:flex;flex-wrap:wrap;gap:4px}
+    .entity-tag{font-size:11px;padding:2px 9px;border-radius:4px;background:var(--accent-glow);color:var(--accent);border:1px solid rgba(0,229,192,.2)}
+    .entity-tag.date{background:var(--blue-dim);color:var(--blue);border-color:rgba(77,159,255,.2)}
+    .entity-tag.num{background:rgba(240,180,41,.08);color:var(--yellow);border-color:rgba(240,180,41,.2)}
+    .btn-load{padding:5px 14px;background:var(--accent);color:#000;border:none;border-radius:5px;font-family:var(--mono);font-size:10px;font-weight:700;cursor:pointer;transition:all .2s;letter-spacing:.04em}
+    .btn-load:hover{background:var(--text-bright);box-shadow:0 0 16px rgba(0,229,192,.3)}
+    .placeholder-msg{font-size:12px;color:var(--muted);padding:24px;text-align:center;line-height:1.9}
+
+    /* ── Compare tab ── */
+    .compare-controls{padding:16px 20px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+    .compare-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+    .compare-select-wrap{flex:1;min-width:140px}
+    .compare-select-label{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+    .compare-select{width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border-bright);border-radius:6px;font-family:var(--mono);font-size:11px;color:var(--text);outline:none;cursor:pointer}
+    .compare-q-wrap{flex:2;min-width:180px}
+    .compare-q{width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border-bright);border-radius:6px;font-family:var(--mono);font-size:11px;color:var(--text-bright);outline:none;transition:all .2s}
+    .compare-q:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+    .btn-compare{padding:9px 18px;background:var(--accent);color:#000;border:none;border-radius:6px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;transition:all .2s;white-space:nowrap;align-self:flex-end;letter-spacing:.04em}
+    .btn-compare:hover{background:var(--text-bright);box-shadow:0 0 20px rgba(0,229,192,.3)}
+    .btn-compare:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}
+    .compare-results{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px}
+    .compare-results::-webkit-scrollbar{width:3px}
+    .compare-results::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+    .compare-analysis{background:var(--surface);border:1px solid var(--border-bright);border-left:3px solid var(--accent);border-radius:8px;padding:16px 18px;box-shadow:0 0 40px var(--accent-glow2)}
+    .compare-analysis-head{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--accent);margin-bottom:12px;display:flex;align-items:center;gap:6px;opacity:.8}
+    .compare-analysis-body{font-size:13px;line-height:1.85;color:var(--text);word-break:break-word}
+    .compare-analysis-body p{margin:0 0 10px}
+    .compare-analysis-body ul,.compare-analysis-body ol{padding-left:18px;margin:0 0 10px}
+    .compare-analysis-body li{margin-bottom:4px}
+    .compare-analysis-body strong{color:var(--text-bright)}
+    .compare-analysis-body h3{font-size:13px;font-weight:700;color:var(--accent);margin:14px 0 6px;font-family:var(--sans)}
+    .compare-analysis-body table{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
+    .compare-analysis-body th{background:var(--accent-glow);color:var(--accent);padding:7px 12px;text-align:left;font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;border:1px solid rgba(0,229,192,.2)}
+    .compare-analysis-body td{padding:7px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+    .compare-analysis-body tr:nth-child(even) td{background:var(--surface2)}
+    .compare-analysis-body tr:hover td{background:var(--accent-glow2)}
+    .compare-sources-head{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+    .compare-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .compare-col{display:flex;flex-direction:column;gap:8px}
+    .compare-col-head{font-size:11px;font-weight:700;color:var(--accent);padding:7px 12px;background:var(--accent-glow);border:1px solid rgba(0,229,192,.2);border-radius:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--sans)}
+    .compare-item{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:11px 13px;font-size:12px;line-height:1.7;color:var(--text)}
+    .compare-item-meta{font-size:10px;color:var(--muted);margin-bottom:5px;display:flex;gap:8px}
+    .compare-placeholder{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;padding:24px;text-align:center}
+
+    /* ── Study tab ── */
+    .study-controls{padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-shrink:0}
+    .study-mode-btns{display:flex;gap:5px}
+    .mode-btn{padding:5px 14px;border:1px solid var(--border-bright);border-radius:4px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--muted2);background:none;cursor:pointer;transition:all .15s;text-transform:uppercase}
+    .mode-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}
+    .btn-gen{padding:7px 16px;background:var(--accent);color:#000;border:none;border-radius:5px;font-family:var(--mono);font-size:10px;font-weight:700;cursor:pointer;transition:all .2s;margin-left:auto;letter-spacing:.06em;text-transform:uppercase}
+    .btn-gen:hover{background:var(--text-bright);box-shadow:0 0 20px rgba(0,229,192,.3)}
+    .btn-gen:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}
+    .study-content{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:10px}
+    .study-content::-webkit-scrollbar{width:3px}
+    .study-content::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+
+    /* Quiz */
+    .quiz-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;transition:border-color .15s}
+    .quiz-card:hover{border-color:var(--border-bright)}
+    .quiz-q{padding:14px 16px;font-size:13px;line-height:1.7;color:var(--text-bright);border-bottom:1px solid var(--border)}
+    .quiz-q-num{font-size:9px;color:var(--accent);letter-spacing:.15em;text-transform:uppercase;margin-bottom:6px;opacity:.7}
+    .quiz-a-toggle{padding:9px 16px;font-size:10px;color:var(--muted);cursor:pointer;background:none;border:none;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;width:100%;text-align:left;transition:all .15s}
+    .quiz-a-toggle:hover{background:var(--surface2);color:var(--accent)}
+    .quiz-a{display:none;padding:14px 16px;font-size:12px;line-height:1.85;color:var(--accent);background:var(--accent-glow2);border-top:1px solid rgba(0,229,192,.1);word-break:break-word;overflow-wrap:anywhere;white-space:pre-wrap;box-sizing:border-box;width:100%}
+    .quiz-a.open{display:block}
+    @keyframes fadeSlideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+    /* Flashcards */
+    .flashcard{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;cursor:pointer;transition:all .2s}
+    .flashcard:hover{background:var(--surface2);border-color:var(--border-bright)}
+    .flashcard-term{font-size:13px;font-weight:700;color:var(--text-bright);margin-bottom:4px;font-family:var(--sans)}
+    .flashcard-def{font-size:12px;color:var(--muted2);line-height:1.7;display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+    .flashcard.flipped .flashcard-def{display:block}
+    .flashcard.flipped .flashcard-term{color:var(--accent)}
+    .flashcard.flipped{border-color:rgba(0,229,192,.2);background:var(--accent-glow2)}
+    .flashcard-hint{font-size:9px;color:var(--muted);margin-top:8px;letter-spacing:.08em;text-transform:uppercase}
+
+    .study-placeholder{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);font-size:12px;gap:8px;text-align:center;padding:24px}
+    .study-placeholder .big{font-family:var(--sans);font-size:28px;font-weight:800;color:var(--border-bright);letter-spacing:-.02em}
+    .study-placeholder p{max-width:220px;line-height:1.9}
+
+    .sys-note{text-align:center;font-size:10px;color:var(--muted);padding:3px 0;letter-spacing:.06em;text-transform:uppercase}
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-logo">Doc<em>Mind</em></div>
+  <div class="topbar-sep"></div>
+  <div class="topbar-sub">RAG · Document Intelligence</div>
+</div>
+
+<!-- Upload loading overlay -->
+<div class="upload-overlay" id="uploadOverlay">
+  <div class="upload-overlay-box">
+    <div class="upload-spinner"></div>
+    <div class="upload-overlay-title">Indexing document…</div>
+    <div class="upload-progress-steps">
+      <div class="upload-step-row" id="ostep1"><div class="upload-step-dot"></div>Extracting text from PDF</div>
+      <div class="upload-step-row" id="ostep2"><div class="upload-step-dot"></div>Chunking &amp; embedding</div>
+      <div class="upload-step-row" id="ostep3"><div class="upload-step-dot"></div>Storing in vector database</div>
+      <div class="upload-step-row" id="ostep4"><div class="upload-step-dot"></div>Generating summary &amp; questions</div>
+    </div>
+    <div class="upload-overlay-sub" id="uploadOverlaySub">Please wait…</div>
+  </div>
+</div>
+
+<!-- Duplicate file confirm dialog -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <div class="confirm-title">⚠️ File already uploaded</div>
+    <div class="confirm-msg" id="confirmMsg"></div>
+    <div class="confirm-btns">
+      <button class="confirm-btn-cancel" onclick="confirmCancel()">Cancel</button>
+      <button class="confirm-btn-swap" onclick="confirmSwap()">↺ Swap file</button>
+    </div>
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- Left sidebar -->
+  <aside class="left">
+    <div class="panel-head">Documents <span class="badge" id="docCount">0</span></div>
+
+    <div class="upload-zone" id="dropZone"
+      onclick="document.getElementById('file').click()"
+      ondblclick="document.getElementById('file').click()"
+    >
+      <div class="upload-icon">📄</div>
+      <div class="upload-label" id="dropLabel"><strong>Click to choose</strong> or drag a PDF</div>
+    </div>
+    <input type="file" id="file" accept=".pdf" onchange="onFile(this)"/>
+    <button class="btn-upload" id="uploadBtn" onclick="upload()" disabled>↑ Upload &amp; Index</button>
+    <div class="upload-status" id="uploadStatus"></div>
+
+    <div class="doc-list" id="docList">
+    </div>
+  </aside>
+
+  <!-- Right main -->
+  <main class="right">
+
+    <!-- Tab bar -->
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('chat')"><span class="tab-icon">💬</span> Chat</div>
+      <div class="tab" onclick="switchTab('search')"><span class="tab-icon">🔍</span> Search</div>
+      <div class="tab" onclick="switchTab('info')"><span class="tab-icon">📋</span> Summary &amp; Info</div>
+      <div class="tab" onclick="switchTab('compare')"><span class="tab-icon">⚖️</span> Compare</div>
+      <div class="tab" onclick="switchTab('study')"><span class="tab-icon">📚</span> Study</div>
+    </div>
+
+    <!-- ── CHAT TAB ── -->
+    <div class="tab-panel active" id="panel-chat">
+      <div class="chat-header">
+        <span class="scope-hint" id="scopeHint">Searching all documents</span>
+        <div class="active-tag" id="activeTag" style="display:none">
+          <span style="color:var(--accent);font-size:8px;animation:pulse .8s infinite">●</span><span id="activeName"></span>
+        </div>
+        <div class="spacer"></div>
+        <span id="histCount" style="font-size:10px;color:var(--muted)"></span>
+        <button class="btn-sm" id="btnClearHist" onclick="clearHistory()" style="display:none">✕ clear</button>
+      </div>
+
+    <div class="summary-strip" id="summaryStrip">
+      <strong>AI Quick Summary</strong><span id="summaryText"></span>
+    </div>
+
+      <div class="qa-section" id="qaSection">
+        <div class="qa-section-head" onclick="toggleQA()">
+          <span class="qa-label">💡 Suggested questions</span>
+          <button class="btn-sm" id="btnRegenQA" onclick="event.stopPropagation();regenQA()" style="color:var(--accent);font-size:10px;padding:2px 6px;border:1px solid rgba(0,229,192,.2);border-radius:10px;background:var(--accent-glow)">↺ Regenerate</button>
+          <span id="qaToggleIcon" style="font-size:11px;color:var(--muted)">▾ hide</span>
+        </div>
+        <div class="qa-chips" id="qaChips"></div>
+      </div>
+
+      <div class="chat-messages" id="chat">
+        <div class="empty-chat" id="emptyChat">
+          <div class="big">Ask anything.</div>
+          <p>Upload a PDF, then ask questions. Use the mic button for voice input.</p>
+        </div>
+      </div>
+
+      <div class="input-row">
+        <textarea id="q" rows="1" placeholder="Ask a question… (Enter to send)" oninput="resize(this)" onkeydown="onKey(event)"></textarea>
+        <select id="langSel" title="Voice language" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;font-family:var(--mono);font-size:11px;color:var(--muted);padding:0 6px;height:38px;cursor:pointer;outline:none">
+          <option value="en-US">🇬🇧 EN</option>
+          <option value="it-IT">🇮🇹 IT</option>
+        </select>
+        <button class="btn-icon" id="micBtn" onclick="toggleVoice()" title="Voice input">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+        <button class="btn-ask" id="btnAsk" onclick="ask()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── SEARCH TAB ── -->
+    <div class="tab-panel" id="panel-search">
+      <div class="search-header">
+        <div class="search-input-row">
+          <input class="search-input" id="searchInput" placeholder="Search documents…" onkeydown="if(event.key==='Enter')doSearch()"/>
+          <button class="btn-search" onclick="doSearch()">Search</button>
+        </div>
+        <div class="search-filter-row" style="position:relative">
+          <span class="search-filter-label">🗂 In:</span>
+          <button class="search-filter-btn" id="searchFilterBtn" onclick="toggleSearchDropdown()">
+            <span class="search-filter-btn-text" id="searchFilterLabel">All documents</span>
+            <span style="margin-left:6px;font-size:9px">▾</span>
+          </button>
+          <div class="search-filter-dropdown" id="searchFilterDropdown">
+            <div class="search-filter-item all-opt" style="cursor:pointer" onclick="toggleSearchAllDocs()">
+              <input type="checkbox" id="sfAll" style="pointer-events:none"/>
+              <span class="search-filter-item-name">All documents</span>
+            </div>
+          </div>
+          <span class="search-count" id="searchCount"></span>
+        </div>
+      </div>
+      <div class="search-results" id="searchResults">
+        <div class="search-empty">
+          <div class="big">Search</div>
+          <p>Type a query and choose a document or search across all.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SUMMARY & INFO TAB ── -->
+    <div class="tab-panel" id="panel-info">
+      <div class="info-scroll" id="infoScroll">
+        <div class="placeholder-msg">Select a document from the sidebar and click <strong>Load Summary</strong> or <strong>Extract Info</strong>.</div>
+      </div>
+    </div>
+
+    <!-- ── COMPARE TAB ── -->
+    <div class="tab-panel" id="panel-compare">
+      <div class="compare-controls">
+        <div class="compare-row">
+          <div class="compare-select-wrap">
+            <div class="compare-select-label">Document 1</div>
+            <select class="compare-select" id="cmpDoc1"></select>
+          </div>
+          <div class="compare-select-wrap">
+            <div class="compare-select-label">Document 2</div>
+            <select class="compare-select" id="cmpDoc2"></select>
+          </div>
+          <div class="compare-q-wrap">
+            <div class="compare-select-label">Question</div>
+            <div style="position:relative;display:flex;align-items:center">
+              <input class="compare-q" id="cmpQuestion" placeholder="Ask a comparison question…" onkeydown="if(event.key==='Enter')doCompare()" style="padding-right:28px"/>
+              <button onclick="document.getElementById('cmpQuestion').value='';document.getElementById('cmpQuestion').focus()" title="Clear" style="position:absolute;right:8px;background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;line-height:1;padding:0" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">×</button>
+            </div>
+          </div>
+          <button class="btn-compare" onclick="doCompare()">Compare</button>
+        </div>
+      </div>
+      <div class="compare-results" id="compareResults">
+        <div class="compare-placeholder">Select two documents above and click Compare.</div>
+      </div>
+    </div>
+
+    <!-- ── STUDY TAB ── -->
+    <div class="tab-panel" id="panel-study">
+      <div class="study-controls">
+        <div class="study-mode-btns">
+          <button class="mode-btn active" id="mode-quiz" onclick="setStudyMode('quiz')">📝 Quiz</button>
+          <button class="mode-btn" id="mode-flash" onclick="setStudyMode('flash')">🃏 Flashcards</button>
+        </div>
+        <button class="btn-gen" id="btnGenStudy" onclick="loadStudy()">Generate</button>
+        <button class="btn-gen" id="btnMoreQuiz" onclick="loadMoreQuestions()" style="display:none;background:var(--surface);color:var(--accent);border:1px solid rgba(0,229,192,.3)">＋ More Questions</button>
+      </div>
+      <div class="study-content" id="studyContent">
+        <div class="study-placeholder">
+          <div class="big">Study Mode</div>
+          <p>Select a document and click Generate to create quiz questions or flashcards.</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+const API = 'http://127.0.0.1:8000';
+let docs       = {};
+let activeId   = null;
+let history    = [];
+let lastQ      = '';
+let studyMode  = 'quiz';
+let studyData  = null;
+let isRecording= false;
+let recognition= null;
+
+// ── Init ───────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    const r = await fetch(`${API}/documents`);
+    const d = await r.json();
+    d.documents.forEach(doc => docs[doc.doc_id] = doc);
+  } catch(_){}
+  renderDocs(); updateCompareSelects(); updateSearchFilterDocs();
+  initVoice();
+})();
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    const names=['chat','search','info','compare','study'];
+    t.classList.toggle('active', names[i]===name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p=>{
+    p.classList.toggle('active', p.id===`panel-${name}`);
+  });
+  if(name==='info') renderInfoTab();
+  if(name==='compare') updateCompareSelects();
+}
+
+// ── Upload ─────────────────────────────────────────────────────────────────
+function onFile(input) {
+  const name = input.files[0]?.name;
+  document.getElementById('dropLabel').innerHTML = name
+    ? `<strong>${name}</strong> — click Upload to index`
+    : '<strong>Click to choose</strong> or drag a PDF';
+  document.getElementById('uploadBtn').disabled = !name;
+  document.getElementById('uploadStatus').textContent = '';
+}
+
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e=>{ e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', ()=>dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e=>{
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if(f){ const dt=new DataTransfer(); dt.items.add(f); const inp=document.getElementById('file'); inp.files=dt.files; onFile(inp); }
+});
+
+// ── Upload overlay helpers ─────────────────────────────────────────────────
+function showOverlay() {
+  ['ostep1','ostep2','ostep3','ostep4'].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.remove('active','done');
+  });
+  document.getElementById('uploadOverlay').classList.add('show');
+}
+function hideOverlay() {
+  document.getElementById('uploadOverlay').classList.remove('show');
+}
+function setOverlayStep(n) {
+  ['ostep1','ostep2','ostep3','ostep4'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    el.classList.remove('active','done');
+    if (i + 1 < n) el.classList.add('done');
+    else if (i + 1 === n) el.classList.add('active');
+  });
+}
+
+// ── Duplicate confirm state ────────────────────────────────────────────────
+let _pendingSwapId  = null;
+let _pendingFile    = null;
+
+function confirmCancel() {
+  _pendingSwapId = null; _pendingFile = null;
+  document.getElementById('confirmOverlay').classList.remove('show');
+  document.getElementById('file').value = '';
+  document.getElementById('dropLabel').innerHTML = '<strong>Click to choose</strong> or drag a PDF';
+  document.getElementById('uploadBtn').disabled = true;
+}
+
+async function confirmSwap() {
+  document.getElementById('confirmOverlay').classList.remove('show');
+  if (_pendingSwapId) {
+    await fetch(`${API}/documents/${_pendingSwapId}`, {method:'DELETE'});
+    delete docs[_pendingSwapId];
+    renderDocs(); updateCompareSelects(); updateSearchFilterDocs();
+  }
+  _pendingSwapId = null;
+  await doUpload(_pendingFile);
+  _pendingFile = null;
+}
+
+async function upload() {
+  const file = document.getElementById('file').files[0];
+  if (!file) return;
+  const existingEntry = Object.entries(docs).find(([, doc]) => doc.name === file.name);
+  if (existingEntry) {
+    const [existingId, existingDoc] = existingEntry;
+    _pendingSwapId = existingId;
+    _pendingFile   = file;
+    document.getElementById('confirmMsg').innerHTML =
+      `<strong>${file.name}</strong> is already uploaded (${existingDoc.chunks} chunks · ${existingDoc.pages || '?'} pages).<br><br>Do you want to swap it with the new version?`;
+    document.getElementById('confirmOverlay').classList.add('show');
+    return;
+  }
+  await doUpload(file);
+}
+
+async function doUpload(file) {
+  const btn    = document.getElementById('uploadBtn');
+  const status = document.getElementById('uploadStatus');
+  btn.disabled = true;
+  showOverlay();
+  try {
+    setOverlayStep(1);
+    await new Promise(r => setTimeout(r, 400));
+    setOverlayStep(2);
+    const fd = new FormData(); fd.append('file', file);
+    const uploadPromise = fetch(`${API}/upload`, {method:'POST', body:fd});
+    await new Promise(r => setTimeout(r, 1200));
+    setOverlayStep(3);
+    const r = await uploadPromise;
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Upload failed');
+    setOverlayStep(4);
+    await new Promise(r => setTimeout(r, 600));
+    docs[d.doc_id] = {name:d.filename, summary:d.summary, chunks:d.chunks, pages:d.pages, suggested_qa:d.suggested_qa};
+    renderDocs(); updateCompareSelects(); updateSearchFilterDocs();
+    selectDoc(d.doc_id);
+    status.textContent = `✓ Uploaded successfully`;
+    status.className = 'upload-status ok';
+    document.getElementById('file').value = '';
+    document.getElementById('dropLabel').innerHTML = '<strong>Click to choose</strong> or drag a PDF';
+  } catch(e) {
+    status.textContent = `✗ ${e.message}`;
+    status.className = 'upload-status err';
+  } finally {
+    hideOverlay();
+    btn.disabled = false;
+    btn.textContent = '↑ Upload & Index';
+  }
+}
+
+// ── Doc list ───────────────────────────────────────────────────────────────
+function renderDocs() {
+  const list = document.getElementById('docList');
+  document.getElementById('docCount').textContent = Object.keys(docs).length;
+  list.innerHTML = '';
+  const all = document.createElement('button');
+  all.className = 'btn-all' + (activeId === null ? ' active' : '');
+  all.textContent = '🔍 All documents';
+  all.addEventListener('click', () => selectDoc(null));
+  list.appendChild(all);
+  if (!Object.keys(docs).length) {
+    const e = document.createElement('div');
+    e.className = 'empty-docs';
+    e.textContent = 'No documents yet.';
+    list.appendChild(e);
+    return;
+  }
+  Object.entries(docs).forEach(([id, doc]) => {
+    const row = document.createElement('div');
+    row.className = 'doc-row' + (id === activeId ? ' active' : '');
+    const icon = document.createElement('span'); icon.className = 'doc-icon'; icon.textContent = '📄';
+    const info = document.createElement('div'); info.className = 'doc-info';
+    const name = document.createElement('div'); name.className = 'doc-name'; name.title = doc.name; name.textContent = doc.name;
+    const meta = document.createElement('div'); meta.className = 'doc-meta'; meta.textContent = `${doc.chunks} chunks · ${doc.pages||'?'} pages`;
+    info.appendChild(name); info.appendChild(meta);
+    const del = document.createElement('button'); del.className = 'doc-del'; del.title = 'Delete'; del.textContent = '×';
+    del.addEventListener('click', e => { e.stopPropagation(); deleteDoc(e, id); });
+    row.addEventListener('click', () => selectDoc(id === activeId ? null : id));
+    row.appendChild(icon); row.appendChild(info); row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+function selectDoc(id) {
+  activeId = id;
+  renderDocs();
+  const tag   = document.getElementById('activeTag');
+  const hint  = document.getElementById('scopeHint');
+  const strip = document.getElementById('summaryStrip');
+  const qa    = document.getElementById('qaSection');
+  if (id && docs[id]) {
+    tag.style.display = 'flex';
+    document.getElementById('activeName').textContent = docs[id].name;
+    hint.style.display = 'none';
+    document.getElementById('summaryText').textContent = docs[id].summary;
+    strip.classList.add('show');
+    renderQAChips(docs[id].suggested_qa || []);
+    qa.classList.add('show');
+  } else {
+    tag.style.display = 'none';
+    hint.style.display = '';
+    strip.classList.remove('show');
+    qa.classList.remove('show');
+  }
+  updateCompareSelects();
+  if (document.getElementById('panel-info').classList.contains('active')) renderInfoTab();
+}
+
+function renderQAChips(suggested) {
+  const chips = document.getElementById('qaChips');
+  chips.innerHTML = '';
+  if (!suggested.length) {
+    const msg = document.createElement('div');
+    msg.style.cssText = 'font-size:11px;color:var(--muted);padding:4px 12px 10px;';
+    msg.textContent = 'No questions yet — click ↺ Regenerate to generate them.';
+    chips.appendChild(msg);
+    return;
+  }
+  suggested.forEach(item => {
+    const c = document.createElement('button');
+    c.className = 'chip';
+    c.textContent = item.question;
+    c.onclick = () => askQuestion(item.question);
+    chips.appendChild(c);
+  });
+}
+
+async function regenQA() {
+  if (!activeId) return;
+  const btn = document.getElementById('btnRegenQA');
+  btn.textContent = '⏳ Generating…';
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/regenerate-qa/${activeId}`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    docs[activeId].suggested_qa = d.suggested_qa;
+    renderQAChips(d.suggested_qa);
+  } catch(e) {
+    alert('Could not regenerate questions: ' + e.message);
+  } finally {
+    btn.textContent = '↺ Regenerate';
+    btn.disabled = false;
+  }
+}
+
+async function deleteDoc(e,id){
+  e.stopPropagation();
+  const r=await fetch(`${API}/documents/${id}`,{method:'DELETE'});
+  if(r.ok){ delete docs[id]; if(activeId===id) selectDoc(null); else renderDocs(); updateCompareSelects(); updateSearchFilterDocs(); }
+}
+
+// ── Chat ───────────────────────────────────────────────────────────────────
+function askQuestion(text){ document.getElementById('q').value=text; ask(); }
+
+async function ask() {
+  const input=document.getElementById('q'), question=input.value.trim();
+  if(!question) return;
+  lastQ=question; input.value=''; resize(input);
+  document.getElementById('emptyChat')?.remove();
+  addUserMsg(question); history.push({role:'user',text:question}); updateHistUI();
+  const typing=addTyping(); document.getElementById('btnAsk').disabled=true;
+  try {
+    const r=await fetch(`${API}/ask`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question,doc_id:activeId})});
+    const d=await r.json(); typing.remove();
+    if(!r.ok) throw new Error(d.detail||'Error');
+    addAiMsg(d); history.push({role:'ai',text:d.answer}); updateHistUI();
+  } catch(e){ typing.remove(); addErrMsg(e.message); }
+  finally { document.getElementById('btnAsk').disabled=false; input.focus(); }
+}
+
+async function rerank(instruction){
+  if(!lastQ) return;
+  const typing=addTyping(); document.getElementById('btnAsk').disabled=true;
+  try {
+    const r=await fetch(`${API}/rerank`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:lastQ,instruction,doc_id:activeId})});
+    const d=await r.json(); typing.remove();
+    if(!r.ok) throw new Error(d.detail||'Error');
+    addSysNote(`↻ Refined: "${instruction}"`);
+    addAiMsg(d); history.push({role:'ai',text:d.answer}); updateHistUI();
+  } catch(e){ typing.remove(); addErrMsg(e.message); }
+  finally { document.getElementById('btnAsk').disabled=false; }
+}
+
+// ── Search ─────────────────────────────────────────────────────────────────
+let searchSelectedDocs = new Set();
+
+function toggleSearchDropdown(){
+  const dd=document.getElementById('searchFilterDropdown');
+  const btn=document.getElementById('searchFilterBtn');
+  const isOpen=dd.classList.toggle('open');
+  btn.classList.toggle('open',isOpen);
+  if(isOpen){ setTimeout(()=>document.addEventListener('click',closeSearchDropdown),0); }
+  else { document.removeEventListener('click',closeSearchDropdown); }
+}
+
+function closeSearchDropdown(e){
+  const dd=document.getElementById('searchFilterDropdown');
+  const btn=document.getElementById('searchFilterBtn');
+  if(!dd.contains(e.target)&&!btn.contains(e.target)){
+    dd.classList.remove('open'); btn.classList.remove('open');
+    document.removeEventListener('click',closeSearchDropdown);
+  }
+}
+
+function updateSearchFilterDocs(){
+  const dd=document.getElementById('searchFilterDropdown');
+  if(!dd) return;
+  dd.querySelectorAll('.doc-filter-item').forEach(el=>el.remove());
+  Object.entries(docs).forEach(([id,doc])=>{
+    const item=document.createElement('div');
+    item.className='search-filter-item doc-filter-item';
+    item.dataset.id=id; item.style.cursor='pointer';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=searchSelectedDocs.has(id); cb.style.pointerEvents='none';
+    const label=document.createElement('span'); label.className='search-filter-item-name'; label.title=doc.name||id; label.textContent=doc.name||id;
+    item.appendChild(cb); item.appendChild(label);
+    item.addEventListener('click', ()=>{ const nowChecked=!searchSelectedDocs.has(id); cb.checked=nowChecked; toggleSearchDoc(id, nowChecked); });
+    dd.appendChild(item);
+  });
+  const sfAll=document.getElementById('sfAll');
+  if(sfAll){ const total=Object.keys(docs).length; sfAll.checked = total > 0 && searchSelectedDocs.size === total; }
+  updateSearchFilterLabel();
+}
+
+function toggleSearchAllDocs(){
+  const total=Object.keys(docs).length;
+  const allChecked=searchSelectedDocs.size===total && total>0;
+  if(!allChecked){ Object.keys(docs).forEach(id=>searchSelectedDocs.add(id)); document.querySelectorAll('.doc-filter-item input[type=checkbox]').forEach(cb=>cb.checked=true); }
+  else { searchSelectedDocs.clear(); document.querySelectorAll('.doc-filter-item input[type=checkbox]').forEach(cb=>cb.checked=false); }
+  const sfAll=document.getElementById('sfAll');
+  if(sfAll) sfAll.checked=!allChecked;
+  updateSearchFilterLabel();
+}
+
+function toggleSearchDoc(id, checked){
+  if(checked) searchSelectedDocs.add(id); else searchSelectedDocs.delete(id);
+  const sfAll=document.getElementById('sfAll');
+  const total=Object.keys(docs).length;
+  if(sfAll) sfAll.checked = total > 0 && searchSelectedDocs.size === total;
+  updateSearchFilterLabel();
+}
+
+function updateSearchFilterLabel(){
+  const lbl=document.getElementById('searchFilterLabel');
+  const inp=document.getElementById('searchInput');
+  if(!lbl) return;
+  const n=searchSelectedDocs.size, total=Object.keys(docs).length;
+  if(n===0){ lbl.textContent= total===0 ? 'No documents' : 'Select a document…'; if(inp) inp.placeholder='Select a document to search…'; }
+  else if(n===total){ lbl.textContent='All documents'; if(inp) inp.placeholder='Search across all documents…'; }
+  else if(n===1){ const id=[...searchSelectedDocs][0]; lbl.textContent=docs[id]?.name||id; if(inp) inp.placeholder=`Search in "${docs[id]?.name||id}"…`; }
+  else { lbl.textContent=`${n} documents selected`; if(inp) inp.placeholder=`Search in ${n} documents…`; }
+}
+
+function highlightKeywords(text, query){
+  const words=query.trim().split(/\s+/).filter(w=>w.length>2).map(w=>w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+  if(!words.length) return esc(text);
+  const re=new RegExp('('+words.join('|')+')','gi');
+  return esc(text).replace(re,'<mark class="search-hit-keyword">$1</mark>');
+}
+
+function toggleHitExpand(btn, textEl){
+  const expanded = textEl.classList.toggle('expanded');
+  textEl.classList.toggle('clamped', !expanded);
+  btn.textContent = expanded ? '▲ Show less' : '▼ Show more';
+}
+
+function renderSearchHit(hit, i, query){
+  const color = hit.confidence>=70 ? 'var(--accent)' : hit.confidence>=40 ? 'var(--yellow)' : 'var(--red)';
+  const div = document.createElement('div'); div.className = 'search-hit';
+  const textId = `sh-text-${i}`, btnId = `sh-btn-${i}`;
+  div.innerHTML =
+    `<div class="search-hit-header">`+
+      `<div class="search-hit-rank">${i+1}</div>`+
+      `<span class="search-hit-file">📄 ${esc(hit.filename||'Unknown')}</span>`+
+      (hit.page ? `<span class="search-hit-page">p.${hit.page}</span>` : '')+
+      `<div class="search-hit-conf-bar" title="${hit.confidence}% match">`+
+        `<div class="search-hit-conf-track"><div class="search-hit-conf-fill" style="width:${hit.confidence}%;background:${color}"></div></div>`+
+        `<span class="search-hit-conf-pct" style="color:${color}">${hit.confidence}%</span>`+
+      `</div>`+
+    `</div>`+
+    `<div class="search-hit-body">`+
+      `<div class="search-hit-text" id="${textId}">${highlightKeywords(hit.text, query)}</div>`+
+      `<button class="search-hit-expand" id="${btnId}" style="display:none" onclick="toggleHitExpand(document.getElementById('${btnId}'),document.getElementById('${textId}'))">▼ Show more</button>`+
+    `</div>`;
+  requestAnimationFrame(() => {
+    const textEl = document.getElementById(textId), btnEl = document.getElementById(btnId);
+    if (textEl && textEl.scrollHeight > 72) { textEl.classList.add('clamped'); if (btnEl) btnEl.style.display = 'block'; }
+  });
+  return div;
+}
+
+async function doSearch(){
+  const query=document.getElementById('searchInput').value.trim();
+  if(!query) return;
+  const el=document.getElementById('searchResults');
+  if(searchSelectedDocs.size===0){ el.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted)">Please select at least one document from the filter above.</div>'; return; }
+  el.innerHTML='<div style="padding:20px;text-align:center;color:var(--muted)">🔍 Searching…</div>';
+  const selectedIds=[...searchSelectedDocs];
+  const searchAll=selectedIds.length===Object.keys(docs).length;
+  try {
+    let allResults=[];
+    if(searchAll){
+      const r=await fetch(`${API}/search`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,doc_id:null})});
+      const d=await r.json();
+      if(!r.ok) throw new Error(d.detail||'Search failed');
+      allResults=d.results||[];
+    } else {
+      const fetches=selectedIds.map(id=>fetch(`${API}/search`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,doc_id:id})}).then(r=>r.json()).then(d=>d.results||[]).catch(()=>[]));
+      const perDocResults=await Promise.all(fetches);
+      allResults=perDocResults.flat().sort((a,b)=>b.confidence-a.confidence);
+    }
+    el.innerHTML='';
+    if(!allResults.length){ el.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted)">No results found.</div>'; document.getElementById('searchCount').textContent=''; return; }
+    document.getElementById('searchCount').textContent=`${allResults.length} result${allResults.length!==1?'s':''}`;
+    allResults.forEach((hit,i)=>el.appendChild(renderSearchHit(hit,i,query)));
+  } catch(e){ el.innerHTML=`<div style="padding:20px;text-align:center;color:var(--red)">${e.message}</div>`; }
+}
+
+// ── Summary & Info tab ─────────────────────────────────────────────────────
+async function renderInfoTab(){
+  const el=document.getElementById('infoScroll');
+  if(!activeId){ el.innerHTML='<div class="placeholder-msg">Select a document from the sidebar.</div>'; return; }
+  const doc=docs[activeId];
+  el.innerHTML=`
+    <div class="info-card" style="flex-shrink:0">
+      <div class="info-card-head">📋 Summary <button class="btn-load" onclick="loadFullSummary()">Load Full Summary</button></div>
+      <div class="info-card-body" style="min-height:80px;max-height:260px;overflow-y:auto"><p>${doc.summary||'–'}</p></div>
+    </div>
+    <div class="info-card" id="fullSummaryCard" style="display:none;flex-shrink:0">
+      <div class="info-card-head">✨ Key Points &amp; Conclusions</div>
+      <div class="info-card-body" id="fullSummaryBody" style="max-height:520px;overflow-y:auto"><p style="color:var(--muted)">Loading…</p></div>
+    </div>
+    <div class="info-card">
+      <div class="info-card-head">🔍 Extracted Information <button class="btn-load" onclick="loadExtract()">Extract Now</button></div>
+      <div class="info-card-body" id="extractBody"><p style="color:var(--muted);font-size:12px">Click Extract Now to analyse the document.</p></div>
+    </div>`;
+}
+
+async function loadFullSummary(){
+  document.getElementById('fullSummaryCard').style.display='';
+  const body=document.getElementById('fullSummaryBody');
+  body.innerHTML='<p style="color:var(--muted)">⏳ Building structured summary… (may take 20–40s)</p>';
+  try {
+    const r=await fetch(`${API}/summarize/${activeId}`);
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Error');
+    const sec=(label,icon,content)=>`<div style="margin-bottom:18px"><p style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">${icon} ${label}</p>${content}</div>`;
+    let html='';
+    if(d.doc_type){ html+=`<div style="display:inline-block;background:var(--accent-glow);color:var(--accent);font-size:10px;padding:3px 10px;border-radius:4px;margin-bottom:16px;font-family:var(--mono)">📄 ${esc(d.doc_type.charAt(0).toUpperCase()+d.doc_type.slice(1))}</div>`; }
+    if(d.overview){ html+=sec('Overview','🔍',`<p style="font-size:13px;line-height:1.9;color:var(--text);border-left:2px solid var(--accent);padding-left:12px;margin:0">${esc(d.overview)}</p>`); }
+    if(d.main_topics?.length){ html+=sec('Main Topics','📚','<ul class="bullet-list">'+d.main_topics.map(t=>`<li>${esc(t)}</li>`).join('')+'</ul>'); }
+    if(d.key_results?.length){ html+=sec('Key Results','⭐','<ul class="bullet-list">'+d.key_results.map(t=>`<li>${esc(t)}</li>`).join('')+'</ul>'); }
+    if(d.takeaway){ html+=sec('Key Takeaway','💡',`<p style="font-size:13px;line-height:1.9;color:var(--text);background:var(--bg);border-radius:6px;padding:10px 14px;margin:0;font-style:italic">${esc(d.takeaway)}</p>`); }
+    body.innerHTML=html||'<p style="color:var(--muted)">No structured content found.</p>';
+  } catch(e){ body.innerHTML=`<p style="color:var(--red)">${e.message}</p>`; }
+}
+
+async function loadExtract(){
+  const body=document.getElementById('extractBody');
+  body.innerHTML='<p style="color:var(--muted)">Extracting…</p>';
+  try {
+    const r=await fetch(`${API}/extract/${activeId}`);
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Error');
+    const groups=[
+      {label:'👤 People',items:d.people,cls:''},
+      {label:'🏢 Companies',items:d.companies,cls:''},
+      {label:'📅 Dates',items:d.dates,cls:'date'},
+      {label:'🔢 Numbers',items:d.numbers,cls:'num'},
+      {label:'📌 Topics',items:d.topics,cls:''},
+    ];
+    body.innerHTML=`<div class="info-grid">${groups.map(g=>`<div class="info-entity-group"><div class="info-entity-label">${g.label}</div><div class="info-entity-items">${(g.items||[]).length?g.items.map(i=>`<span class="entity-tag ${g.cls}">${i}</span>`).join(''):'<span style="font-size:11px;color:var(--muted)">None found</span>'}</div></div>`).join('')}</div>`;
+  } catch(e){ body.innerHTML=`<p style="color:var(--red)">${e.message}</p>`; }
+}
+
+// ── Compare ────────────────────────────────────────────────────────────────
+function updateCompareSelects(){
+  ['cmpDoc1','cmpDoc2'].forEach(id=>{
+    const sel=document.getElementById(id);
+    const cur=sel.value;
+    sel.innerHTML='<option value="">— select —</option>'+Object.entries(docs).map(([id,doc])=>`<option value="${id}">${doc.name}</option>`).join('');
+    if(cur) sel.value=cur;
+  });
+}
+
+async function doCompare(){
+  const id1=document.getElementById('cmpDoc1').value, id2=document.getElementById('cmpDoc2').value;
+  const q=document.getElementById('cmpQuestion').value.trim();
+  if(!id1||!id2){ alert('Please select two documents.'); return; }
+  if(id1===id2){ alert('Please select two different documents.'); return; }
+  const el=document.getElementById('compareResults');
+  el.innerHTML='<div class="compare-placeholder">🔍 Step 1/3: Extracting topics from both documents…</div>';
+  document.querySelector('.btn-compare').disabled=true;
+  try {
+    const r=await fetch(`${API}/compare`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_id_1:id1,doc_id_2:id2,question:q||undefined})});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Error');
+    el.innerHTML='';
+    if(d.analysis){
+      const analysisBox=document.createElement('div'); analysisBox.className='compare-analysis';
+      analysisBox.innerHTML=`<div class="compare-analysis-head">🧠 AI Comparison · <em style="font-style:normal;text-transform:none;letter-spacing:0;color:var(--muted)">${esc(d.question)}</em></div><div class="compare-analysis-body">${renderMarkdown(d.analysis)}</div>`;
+      el.appendChild(analysisBox);
+    }
+    const sourcesLabel=document.createElement('div'); sourcesLabel.className='compare-sources-head'; sourcesLabel.textContent='📄 Source Passages'; el.appendChild(sourcesLabel);
+    const cols=document.createElement('div'); cols.className='compare-cols';
+    [d.doc1,d.doc2].forEach(side=>{
+      const col=document.createElement('div'); col.className='compare-col';
+      col.innerHTML=`<div class="compare-col-head">📄 ${esc(side.name)}</div>`+(side.results?.length ? side.results.map(res=>`<div class="compare-item"><div class="compare-item-meta">${res.topic?`<span style="color:var(--accent);font-weight:500">${esc(res.topic)}</span>`:''} ${res.page?`<span>p.${res.page}</span>`:''}</div>${prose(res.text)}</div>`).join('') : `<div class="compare-item" style="color:var(--muted)">No relevant passages found.</div>`);
+      cols.appendChild(col);
+    });
+    el.appendChild(cols);
+  } catch(e){ el.innerHTML=`<div class="compare-placeholder" style="color:var(--red)">${e.message}</div>`; }
+  finally { document.querySelector('.btn-compare').disabled=false; }
+}
+
+// ── Study ──────────────────────────────────────────────────────────────────
+function setStudyMode(mode){
+  studyMode=mode;
+  document.getElementById('mode-quiz').classList.toggle('active',mode==='quiz');
+  document.getElementById('mode-flash').classList.toggle('active',mode==='flash');
+  document.getElementById('btnMoreQuiz').style.display = (mode==='quiz' && studyData) ? '' : 'none';
+  if(studyData) renderStudy();
+}
+
+async function loadStudy(){
+  if(!activeId){ alert('Select a document first.'); return; }
+  const btn=document.getElementById('btnGenStudy'), el=document.getElementById('studyContent');
+  btn.disabled=true; btn.textContent='Generating…';
+  el.innerHTML='<div style="padding:20px;text-align:center;color:var(--muted)">Generating study materials…</div>';
+  try {
+    const r=await fetch(`${API}/study/${activeId}`);
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Error');
+    studyData=d; renderStudy();
+    document.getElementById('btnMoreQuiz').style.display = studyMode==='quiz' ? '' : 'none';
+  } catch(e){ el.innerHTML=`<div style="padding:20px;text-align:center;color:var(--red)">${e.message}</div>`; }
+  finally{ btn.disabled=false; btn.textContent='Generate'; }
+}
+
+// ── BUG FIX: shared quiz card factory ─────────────────────────────────────
+// Previously loadMoreQuestions() duplicated this logic with subtle differences
+// that caused answers not to appear. Now both renderStudy() and
+// loadMoreQuestions() use this single function.
+function createQuizCard(item, index) {
+  const card = document.createElement('div');
+  card.className = 'quiz-card';
+
+  const qDiv = document.createElement('div');
+  qDiv.className = 'quiz-q';
+  const qNum = document.createElement('div');
+  qNum.className = 'quiz-q-num';
+  qNum.textContent = `Question ${index + 1}`;
+  qDiv.appendChild(qNum);
+  qDiv.appendChild(document.createTextNode(item.question));
+
+  const btn = document.createElement('button');
+  btn.className = 'quiz-a-toggle';
+  btn.textContent = '▸ Show answer';
+
+  const ans = document.createElement('div');
+  ans.className = 'quiz-a';
+
+  // If the backend pre-filled an answer (regex fallback), show it immediately
+  let fetched = !!(item.answer && item.answer.trim());
+  if (fetched) ans.textContent = item.answer;
+
+  btn.addEventListener('click', async () => {
+    const isOpen = ans.classList.contains('open');
+    if (isOpen) {
+      ans.classList.remove('open');
+      btn.textContent = '▸ Show answer';
+      return;
+    }
+
+    if (!fetched) {
+      // Fetch answer from /ask — keep button disabled until we have the answer
+      btn.disabled = true;
+      btn.textContent = '⏳ Loading answer…';
+      try {
+        const r = await fetch(`${API}/ask`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({question: item.question, doc_id: activeId})
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Server error');
+        ans.textContent = d.answer || 'No answer found.';
+        item.answer = d.answer;
+        fetched = true;
+      } catch (e) {
+        ans.textContent = '⚠ Could not load answer: ' + e.message;
+      }
+      btn.disabled = false;
+    }
+
+    // Open AFTER content is ready (avoids empty-div flash)
+    ans.classList.add('open');
+    btn.textContent = '▾ Hide answer';
+  });
+
+  card.appendChild(qDiv);
+  card.appendChild(btn);
+  card.appendChild(ans);
+  return card;
+}
+
+async function loadMoreQuestions(){
+  if(!activeId) return;
+  const btn = document.getElementById('btnMoreQuiz');
+  btn.disabled=true; btn.textContent='⏳ Loading…';
+  try {
+    const r = await fetch(`${API}/study/${activeId}/more?count=5`);
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail||'Error');
+    const existingQs = new Set((studyData?.quiz||[]).map(q => q.question.toLowerCase().trim()));
+    const newItems = (d.quiz || []).filter(q => !existingQs.has(q.question.toLowerCase().trim()));
+    if(!studyData) studyData = {quiz:[], flashcards:[]};
+    const startIdx = (studyData.quiz||[]).length;
+    studyData.quiz = [...(studyData.quiz||[]), ...newItems];
+    if(!newItems.length){ alert('No new unique questions were generated — try again.'); return; }
+    const el = document.getElementById('studyContent');
+    newItems.forEach((item, i) => {
+      const card = createQuizCard(item, startIdx + i);
+      card.style.animation = 'fadeSlideIn .3s ease';
+      el.appendChild(card);
+    });
+    el.lastElementChild?.scrollIntoView({behavior:'smooth', block:'start'});
+  } catch(e){ alert('Error generating more questions: ' + e.message); }
+  finally{ btn.disabled=false; btn.textContent='＋ More Questions'; }
+}
+
+function renderStudy(){
+  const el=document.getElementById('studyContent');
+  el.innerHTML='';
+  if(studyMode==='quiz'){
+    const items=studyData.quiz||[];
+    if(!items.length){ el.innerHTML='<div class="study-placeholder"><p>No quiz questions could be generated for this document.</p></div>'; return; }
+    items.forEach((item, i) => el.appendChild(createQuizCard(item, i)));
+  } else {
+    const items=studyData.flashcards||[];
+    if(!items.length){ el.innerHTML='<div class="study-placeholder"><p>No flashcards could be generated. Try a document with more definitions.</p></div>'; return; }
+    items.forEach(item=>{
+      const card=document.createElement('div'); card.className='flashcard';
+      card.innerHTML=`<div class="flashcard-term">${item.term}</div><div class="flashcard-def">${item.definition}</div><div class="flashcard-hint">Click to flip</div>`;
+      card.onclick=()=>card.classList.toggle('flipped');
+      el.appendChild(card);
+    });
+  }
+}
+
+// ── Renderers ──────────────────────────────────────────────────────────────
+function addUserMsg(text){
+  const chat=document.getElementById('chat');
+  const wrap=document.createElement('div'); wrap.className='msg user';
+  wrap.innerHTML=`<div class="msg-who">You</div><div class="msg-body"><p>${esc(text)}</p></div>`;
+  chat.appendChild(wrap); chat.scrollTop=chat.scrollHeight;
+}
+function addErrMsg(text){
+  const chat=document.getElementById('chat');
+  const wrap=document.createElement('div'); wrap.className='msg err';
+  wrap.innerHTML=`<div class="msg-who">Error</div><div class="msg-body"><p>${esc(text)}</p></div>`;
+  chat.appendChild(wrap); chat.scrollTop=chat.scrollHeight;
+}
+function addSysNote(text){
+  const chat=document.getElementById('chat');
+  const note=document.createElement('div'); note.className='sys-note'; note.textContent=text;
+  chat.appendChild(note);
+}
+
+function addAiMsg(data){
+  const chat=document.getElementById('chat');
+  const wrap=document.createElement('div'); wrap.className='msg ai';
+  const color=data.confidence>=70?'#006b5e':data.confidence>=40?'#b7860b':'#c0392b';
+  const clabel=data.confidence>=70?'High':data.confidence>=40?'Medium':'Low';
+  const excerpt=data.passages?.[0]?.text||data.answer;
+  const sourceHTML=`<div class="source-box"><div class="source-label">Document Source</div><div class="source-excerpt">"${esc(excerpt.length>200?excerpt.slice(0,200)+'…':excerpt)}"</div><div class="source-meta">${data.filename?`<span>📄 ${esc(data.filename)}</span>`:''} ${data.page?`<span class="page-tag">Page ${data.page}</span>`:''}</div></div>`;
+  let passHTML='';
+  if(data.passages?.length>1){
+    const items=data.passages.slice(1).map(p=>{
+      const pc=p.confidence>=70?'#006b5e':p.confidence>=40?'#b7860b':'#c0392b';
+      return `<div class="passage"><div class="passage-meta"><span class="passage-pct" style="color:${pc}">${p.confidence}% match</span>${p.page?`<span class="passage-pg">page ${p.page}</span>`:''} ${p.filename?`<span class="passage-fn">📄 ${esc(p.filename)}</span>`:''}</div><div style="font-size:12px;line-height:1.7;font-style:italic;color:var(--muted)">"${esc(p.text.length>180?p.text.slice(0,180)+'…':p.text)}"</div></div>`;
+    }).join('');
+    passHTML=`<button class="passages-btn" onclick="togglePassages(this)">▸ ${data.passages.length-1} more passage${data.passages.length>2?'s':''}</button><div class="passages-wrap">${items}</div>`;
+  }
+  const rerankHTML=`<div class="rerank-bar"><div class="rerank-label">Refine answer</div><div class="rerank-chips"><button class="rerank-chip" onclick="rerank('precise')">🔍 More specific</button><button class="rerank-chip" onclick="rerank('simple brief')">📖 Simpler</button><button class="rerank-chip" onclick="rerank('more detail elaborate')">📚 More detail</button><button class="rerank-chip" onclick="rerank('brief short')">⚡ Brief</button></div></div>`;
+  const exportHTML=`<div class="export-row"><span class="export-label">Export:</span><button class="export-btn" onclick="exportAnswer(this,'md')">Markdown</button><button class="export-btn" onclick="exportAnswer(this,'pdf')">PDF</button><button class="export-btn" onclick="exportAnswer(this,'doc')">Word</button></div>`;
+  wrap.innerHTML=`<div class="msg-who">DocMind</div><div class="msg-body">${prose(data.answer)}</div>${sourceHTML}<div class="conf-row"><div class="conf-track"><div class="conf-fill" style="width:${data.confidence}%;background:${color}"></div></div><span class="conf-text" style="color:${color}">${data.confidence}% — ${clabel}</span></div>${passHTML}${rerankHTML}${exportHTML}`;
+  wrap.dataset.answer   = data.answer;
+  wrap.dataset.filename = data.filename||'';
+  wrap.dataset.page     = data.page||'';
+  wrap.dataset.question = lastQ;
+  chat.appendChild(wrap); chat.scrollTop=chat.scrollHeight;
+}
+
+function togglePassages(btn){
+  const wrap=btn.nextElementSibling, open=wrap.classList.toggle('open');
+  const n=wrap.children.length;
+  btn.textContent=(open?'▾ ':'▸ ')+`${n} more passage${n>1?'s':''}`;
+}
+
+function addTyping(){
+  const chat=document.getElementById('chat');
+  const wrap=document.createElement('div'); wrap.className='msg ai';
+  wrap.innerHTML='<div class="msg-who">DocMind</div><div class="msg-body"><div class="typing-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>';
+  chat.appendChild(wrap); chat.scrollTop=chat.scrollHeight;
+  return wrap;
+}
+
+// ── Export ─────────────────────────────────────────────────────────────────
+function exportAnswer(btn, format){
+  const wrap  = btn.closest('.msg');
+  const answer= wrap.dataset.answer||'';
+  const fname = wrap.dataset.filename||'document';
+  const page  = wrap.dataset.page ? `Page ${wrap.dataset.page}` : '';
+  const q     = wrap.dataset.question||'';
+  const date  = new Date().toLocaleDateString();
+  if(format==='md'){
+    const content=`# DocMind — Answer Export\n\n**Date:** ${date}  \n**Document:** ${fname}  \n${page?`**Source:** ${page}  \n`:''}\n---\n\n**Question:** ${q}\n\n**Answer:**\n\n${answer}\n`;
+    download('answer.md', content, 'text/markdown');
+  } else if(format==='pdf'){
+    const win=window.open('','_blank');
+    win.document.write(`<!DOCTYPE html><html><head><title>DocMind Export</title><style>body{font-family:Georgia,serif;max-width:700px;margin:40px auto;color:#1a1a1a;line-height:1.7}h1{font-size:20px;border-bottom:1px solid #ddd;padding-bottom:8px}pre{white-space:pre-wrap;font-family:inherit}.meta{color:#666;font-size:13px;margin-bottom:20px}.answer{font-size:15px}</style></head><body><h1>DocMind — Answer</h1><div class="meta"><strong>Document:</strong> ${fname}<br>${page?`<strong>Source:</strong> ${page}<br>`:''}<strong>Date:</strong> ${date}</div><p><strong>Question:</strong> ${q}</p><div class="answer"><p>${answer.replace(/\n\n/g,'</p><p>')}</p></div></body></html>`);
+    win.document.close(); win.print();
+  } else if(format==='doc'){
+    const content=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"/><title>DocMind Export</title></head><body><h1>DocMind — Answer</h1><p><b>Document:</b> ${fname}</p>${page?`<p><b>Source:</b> ${page}</p>`:''}<p><b>Date:</b> ${date}</p><p><b>Question:</b> ${q}</p><p>${answer.replace(/\n\n/g,'</p><p>')}</p></body></html>`;
+    download('answer.doc', content, 'application/msword');
+  }
+}
+
+function download(filename, content, mime){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([content],{type:mime}));
+  a.download=filename; a.click();
+}
+
+// ── Voice input ────────────────────────────────────────────────────────────
+function initVoice(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ document.getElementById('micBtn').style.display='none'; document.getElementById('langSel').style.display='none'; return; }
+  recognition=new SR(); recognition.continuous=false; recognition.interimResults=false;
+  recognition.onresult=e=>{ const text=e.results[0][0].transcript; const inp=document.getElementById('q'); inp.value=text; resize(inp); stopVoice(); };
+  recognition.onerror=()=>stopVoice();
+  recognition.onend=()=>stopVoice();
+}
+function toggleVoice(){ if(isRecording) stopVoice(); else startVoice(); }
+function startVoice(){
+  if(!recognition) return;
+  recognition.lang=document.getElementById('langSel').value;
+  isRecording=true;
+  document.getElementById('micBtn').classList.add('recording');
+  document.getElementById('q').placeholder = recognition.lang==='it-IT' ? 'In ascolto…' : 'Listening…';
+  recognition.start();
+}
+function stopVoice(){
+  isRecording=false;
+  document.getElementById('micBtn').classList.remove('recording');
+  document.getElementById('q').placeholder='Ask a question… (Enter to send)';
+  try{ recognition.stop(); } catch(_){}
+}
+
+// ── History ────────────────────────────────────────────────────────────────
+function updateHistUI(){
+  const n=history.length;
+  document.getElementById('histCount').textContent=n?`${n} msg`:'';
+  document.getElementById('btnClearHist').style.display=n?'':'none';
+}
+function clearHistory(){ history=[]; lastQ=''; document.getElementById('chat').innerHTML=''; updateHistUI(); }
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function toggleQA(){
+  const sec=document.getElementById('qaSection'), icon=document.getElementById('qaToggleIcon');
+  sec.classList.toggle('qa-collapsed');
+  icon.textContent=sec.classList.contains('qa-collapsed')? '▸ show' : '▾ hide';
+}
+
+function prose(text){ return text.split(/\n\n+/).map(p=>`<p>${p.replace(/\n/g,' ').trim()}</p>`).filter(p=>p!=='<p></p>').join(''); }
+function esc(str){ return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function renderMarkdown(text){
+  if(!text) return '';
+  let html = esc(text);
+  html = html.replace(/(\|.+\|\n?)+/g, match => {
+    const rows = match.trim().split('\n').map(r => r.trim()).filter(r => r.startsWith('|'));
+    if(rows.length < 2) return match;
+    const isSep = r => /^\|[\s\-:|]+\|/.test(r);
+    let out = '<table>'; let inBody = false;
+    rows.forEach((row, i) => {
+      if(isSep(row)) { inBody = true; return; }
+      const cells = row.replace(/^\||\|$/g,'').split('|').map(c => c.trim());
+      if(!inBody) { out += '<tr>' + cells.map(c=>`<th>${c}</th>`).join('') + '</tr>'; }
+      else { out += '<tr>' + cells.map(c=>`<td>${c}</td>`).join('') + '</tr>'; }
+    });
+    out += '</table>'; return out;
+  });
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^##\s+(.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/(^[\*\-]\s+.+(\n|$))+/gm, match => { const items = match.trim().split('\n').map(l => l.replace(/^[\*\-]\s+/,'').trim()); return '<ul>' + items.map(i=>`<li>${i}</li>`).join('') + '</ul>'; });
+  html = html.replace(/(^\d+\.\s+.+(\n|$))+/gm, match => { const items = match.trim().split('\n').map(l => l.replace(/^\d+\.\s+/,'').trim()); return '<ol>' + items.map(i=>`<li>${i}</li>`).join('') + '</ol>'; });
+  html = html.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
+  html = `<p>${html}</p>`;
+  html = html.replace(/<p>\s*<\/p>/g,'').replace(/<p>(<[ht])/g,'$1').replace(/(<\/(?:table|ul|ol|h3)>)<\/p>/g,'$1');
+  return html;
+}
+
+function resize(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
+function onKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); ask(); } }
+</script>
+</body>
+</html>

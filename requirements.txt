@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pypdf
+langchain-text-splitters
+langchain-huggingface
+sentence-transformers
+chromadb
+groq
