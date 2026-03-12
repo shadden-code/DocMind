@@ -20,8 +20,4 @@ groq>=0.5
 
 cerebras-cloud-sdk>=1.0
 
-<<<<<<< Updated upstream
 python-dotenv>=1.0
-=======
-python-dotenv>=1.0
->>>>>>> Stashed changes
