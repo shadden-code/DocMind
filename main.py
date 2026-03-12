@@ -113,32 +113,43 @@ _rebuild_bm25()
 # ── Cross-encoder reranker (~80 MB, downloaded once) ──────────────────────────
 # ms-marco-MiniLM-L-6-v2: fast reranker that scores (query, passage) pairs.
 # Used to rerank top-10 cosine candidates → top-3 semantically precise results.
-try:
-    reranker   = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", max_length=512)
-    RERANKER_OK = True
-    print("[DocMind] Cross-encoder reranker loaded ✓")
-except Exception as _e:
-    print(f"[DocMind] Reranker failed to load: {_e}. Using cosine similarity only.")
-    reranker    = None
-    RERANKER_OK = False
+reranker = None
+RERANKER_OK = True
 
+def get_reranker():
+    global reranker
+
+    if reranker is None:
+        try:
+            print("[DocMind] Loading cross-encoder reranker...")
+            from sentence_transformers import CrossEncoder
+            reranker = CrossEncoder(
+                "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                max_length=512
+            )
+            print("[DocMind] Cross-encoder reranker loaded ✓")
+        except Exception as e:
+            print(f"[DocMind] Failed to load reranker: {e}")
+            return None
+
+    return reranker
 # ── Groq client (replaces FLAN-T5) ───────────────────────────────────────────
 # Free API key at https://console.groq.com → API Keys → Create key
 # Set it as an environment variable:  export GROQ_API_KEY="gsk_..."
 # Or paste it directly below (not recommended for production):
 
-_GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-hf_token = os.getenv("HF_TOKEN")
-_CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
 
 # ── Cerebras ───────────────────────────────────────────────────────────────────
 _CEREBRAS_MODEL   = "llama-3.3-70b"
 _CEREBRAS_FAST    = "llama3.1-8b"
 _cerebras_client  = None
 
-if _CEREBRAS_AVAILABLE and _CEREBRAS_API_KEY:
+if _CEREBRAS_AVAILABLE and CEREBRAS_API_KEY:
     try:
-        _cerebras_client = Cerebras(api_key=_CEREBRAS_API_KEY)
+        _cerebras_client = Cerebras(api_key=CEREBRAS_API_KEY)
         print(f"[DocMind] Cerebras ready ✓  (model: {_CEREBRAS_MODEL})")
     except Exception as _ce:
         print(f"[DocMind] Cerebras init failed: {_ce}")
@@ -150,7 +161,7 @@ _GROQ_FALLBACK2= "qwen/qwen3-32b"
 _GROQ_FAST     = "llama-3.1-8b-instant"
 
 try:
-    _groq_client = Groq(api_key=_GROQ_API_KEY) if _GROQ_API_KEY else None
+    _groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
     SUMMARIZER_OK = _groq_client is not None
     if SUMMARIZER_OK:
         print(f"[DocMind] Groq client ready ✓")
@@ -847,7 +858,7 @@ def _query(question: str, doc_id: str | None, n: int) -> dict:
     # ── Step 5: Cross-encoder reranker ────────────────────────────────────────
     if RERANKER_OK and reranker and len(merged_docs) > 1:
         pairs  = [(question, _clean(d)) for d in merged_docs]
-        scores = reranker.predict(pairs)
+        scores = get_reranker().predict(pairs)
         ranked = sorted(zip(scores, merged_docs, merged_dists, merged_metas), key=lambda x: -x[0])
         ranked = ranked[:max(n, 3)]
         merged_docs  = [d    for _, d, _, _ in ranked]
