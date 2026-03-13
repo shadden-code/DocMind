@@ -38,19 +38,29 @@ def _load_embeddings():
     if embeddings is not None:
         return  # already loaded, prevent duplicate loading
     print("[DocMind] Loading ML dependencies in background...")
-    # Import heavy libraries only now (avoids slow startup / Render port timeout)
-    import gc
-    from transformers import logging as hf_logging
-    hf_logging.set_verbosity_error()
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    from langchain_huggingface import HuggingFaceEmbeddings
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-MiniLM-L6-v2",
-        encode_kwargs={"batch_size": 8, "normalize_embeddings": True},
-    )
-    gc.collect()  # free unused memory after model load
-    print("[DocMind] Embeddings loaded ✓")
+    try:
+        import gc
+        from transformers import logging as hf_logging
+        hf_logging.set_verbosity_error()
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        from langchain_huggingface import HuggingFaceEmbeddings
+
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+        print("[DocMind] Splitter ready, loading embedding model...")
+
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/paraphrase-MiniLM-L6-v2",
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"batch_size": 8, "normalize_embeddings": True},
+        )
+        gc.collect()
+        print("[DocMind] Embeddings loaded ✓")
+    except Exception as e:
+        global _load_error
+        _load_error = str(e)
+        print(f"[DocMind] ERROR loading embeddings: {e}")
+        import traceback
+        traceback.print_exc()
 
 @app.on_event("startup")
 async def startup_event():
@@ -63,12 +73,15 @@ app.add_middleware(
 # Serve style.css, script.js and any other static assets from the project folder
 app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
 
+_load_error = None
+
 @app.get("/health")
 def health():
     """Used by frontend to poll until server is ready."""
     if embeddings is None or splitter is None:
         from fastapi.responses import JSONResponse as JR
-        return JR({"ready": False, "message": "Loading AI models…"}, status_code=503)
+        msg = f"Loading failed: {_load_error}" if _load_error else "Loading AI models…"
+        return JR({"ready": False, "message": msg}, status_code=503)
     return {"ready": True, "message": "Server ready"}
 
 @app.get("/")
