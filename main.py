@@ -42,7 +42,7 @@ def _load_embeddings():
     from langchain_huggingface import HuggingFaceEmbeddings
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        model_name="sentence-transformers/paraphrase-MiniLM-L6-v2",
         encode_kwargs={"batch_size": 16, "normalize_embeddings": True},
     )
     print("[DocMind] Embeddings loaded ✓")
