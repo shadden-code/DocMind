@@ -36,11 +36,12 @@ embeddings = None
 @app.on_event("startup")
 async def startup_event():
     global embeddings
+    # batch_size reduced from 64 → 16 to keep startup memory under 512 MB on Render free tier
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        encode_kwargs={"batch_size": 64, "normalize_embeddings": True},
+        encode_kwargs={"batch_size": 16, "normalize_embeddings": True},
     )
-    print("Embeddings loaded")
+    print("[DocMind] Embeddings loaded ✓")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -51,12 +52,6 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
 @app.get("/")
 def serve_ui():
     return FileResponse(BASE_DIR / "index.html")
-
-# ── Shared resources ───────────────────────────────────────────────────────────
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-    encode_kwargs={"batch_size": 64, "normalize_embeddings": True},
-)
 
 # Chunk size increased from 500 → 1000 chars, overlap 100 → 150
 # Larger chunks = more context per retrieved passage = fewer wrong-neighbour retrievals
@@ -353,8 +348,8 @@ async def upload(file: UploadFile = File(...)):
             all_meta.append({"doc_id": doc_id, "page": page_num})
             i += 1
 
-    # Embed ALL chunks in one batched call (much faster than one-by-one)
-    _EMBED_BATCH = 64
+    # Embed chunks in batches — kept small to stay under 512 MB on Render free tier
+    _EMBED_BATCH = 16
     all_vectors = []
     for start in range(0, len(all_chunks), _EMBED_BATCH):
         batch = all_chunks[start: start + _EMBED_BATCH]
