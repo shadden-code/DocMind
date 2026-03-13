@@ -5,12 +5,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pypdf import PdfReader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from sentence_transformers import CrossEncoder
 from groq import Groq
 from rank_bm25 import BM25Okapi
-from transformers import logging
+# Heavy ML imports are deferred to background thread to avoid Render port timeout
+# HuggingFaceEmbeddings, CrossEncoder, RecursiveCharacterTextSplitter loaded lazily
 import os
 import chromadb
 import uuid, re
@@ -26,7 +24,6 @@ except ImportError:
     _CEREBRAS_AVAILABLE = False
     print("[DocMind] cerebras-cloud-sdk not installed — run: pip install cerebras-cloud-sdk")
 
-logging.set_verbosity_error()
 
 BASE_DIR = Path(__file__).parent
 
@@ -36,8 +33,14 @@ embeddings = None
 import threading
 
 def _load_embeddings():
-    global embeddings
-    print("[DocMind] Loading embeddings in background...")
+    global embeddings, splitter
+    print("[DocMind] Loading ML dependencies in background...")
+    # Import heavy libraries only now (avoids slow startup / Render port timeout)
+    from transformers import logging as hf_logging
+    hf_logging.set_verbosity_error()
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_huggingface import HuggingFaceEmbeddings
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         encode_kwargs={"batch_size": 16, "normalize_embeddings": True},
@@ -59,9 +62,8 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
 def serve_ui():
     return FileResponse(BASE_DIR / "index.html")
 
-# Chunk size increased from 500 → 1000 chars, overlap 100 → 150
-# Larger chunks = more context per retrieved passage = fewer wrong-neighbour retrievals
-splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+# splitter is initialised in _load_embeddings() background thread
+splitter = None
 
 import json, time
 from fastapi import Cookie
@@ -318,7 +320,7 @@ class SearchRequest(BaseModel):
 # ─────────────────────────────────────────────
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), session_id: str = Cookie(default=None)):
-    if embeddings is None:
+    if embeddings is None or splitter is None:
         raise HTTPException(503, "Server is still loading, please wait 30 seconds and try again.")
     if not file.filename.endswith(".pdf"):
         raise HTTPException(400, "Only PDF files are accepted.")
