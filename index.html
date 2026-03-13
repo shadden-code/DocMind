@@ -371,6 +371,12 @@
     .study-placeholder p{max-width:220px;line-height:1.9}
 
     .sys-note{text-align:center;font-size:10px;color:var(--muted);padding:3px 0;letter-spacing:.06em;text-transform:uppercase}
+    .session-notice{margin:8px 12px 0;padding:9px 12px;background:rgba(0,229,192,.06);border:1px solid rgba(0,229,192,.2);border-radius:6px;font-size:10px;color:var(--muted2);line-height:1.6;display:none}
+    .session-notice.show{display:block}
+    .session-notice strong{color:var(--accent)}
+    .btn-clear-session{width:calc(100% - 24px);margin:4px 12px 0;padding:7px;background:none;border:1px solid var(--border-bright);border-radius:6px;font-family:var(--mono);font-size:10px;color:var(--muted);cursor:pointer;transition:all .15s;letter-spacing:.04em;display:none}
+    .btn-clear-session:hover{border-color:var(--red);color:var(--red)}
+    .btn-clear-session.show{display:block}
   </style>
 </head>
 <body>
@@ -424,6 +430,12 @@
     <input type="file" id="file" accept=".pdf" onchange="onFile(this)"/>
     <button class="btn-upload" id="uploadBtn" onclick="upload()" disabled>↑ Upload &amp; Index</button>
     <div class="upload-status" id="uploadStatus"></div>
+
+    <div class="session-notice" id="sessionNotice">
+      <strong>🔒 Private session</strong><br>
+      Your documents are visible only to you and will be auto-deleted after 1 hour of inactivity.
+    </div>
+    <button class="btn-clear-session" id="btnClearSession" onclick="clearSession()">🗑 Clear my session &amp; all documents</button>
 
     <div class="doc-list" id="docList">
     </div>
@@ -574,7 +586,7 @@
 </div>
 
 <script>
-const API = 'http://127.0.0.1:8000';
+const API = window.location.origin === 'null' || window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost' ? 'http://127.0.0.1:8000' : window.location.origin;
 let docs       = {};
 let activeId   = null;
 let history    = [];
@@ -587,7 +599,7 @@ let recognition= null;
 // ── Init ───────────────────────────────────────────────────────────────────
 (async () => {
   try {
-    const r = await fetch(`${API}/documents`);
+    const r = await fetch(`\${API}/documents`, {credentials:'include'});
     const d = await r.json();
     d.documents.forEach(doc => docs[doc.doc_id] = doc);
   } catch(_){}
@@ -662,7 +674,7 @@ function confirmCancel() {
 async function confirmSwap() {
   document.getElementById('confirmOverlay').classList.remove('show');
   if (_pendingSwapId) {
-    await fetch(`${API}/documents/${_pendingSwapId}`, {method:'DELETE'});
+    await fetch(`\${API}/documents/${_pendingSwapId}`, {credentials:'include',method:'DELETE'});
     delete docs[_pendingSwapId];
     renderDocs(); updateCompareSelects(); updateSearchFilterDocs();
   }
@@ -697,7 +709,7 @@ async function doUpload(file) {
     await new Promise(r => setTimeout(r, 400));
     setOverlayStep(2);
     const fd = new FormData(); fd.append('file', file);
-    const uploadPromise = fetch(`${API}/upload`, {method:'POST', body:fd});
+    const uploadPromise = fetch(`\${API}/upload`, {credentials:'include',method:'POST', body:fd});
     await new Promise(r => setTimeout(r, 1200));
     setOverlayStep(3);
     const r = await uploadPromise;
@@ -710,6 +722,8 @@ async function doUpload(file) {
     selectDoc(d.doc_id);
     status.textContent = `✓ Uploaded successfully`;
     status.className = 'upload-status ok';
+    document.getElementById('sessionNotice').classList.add('show');
+    document.getElementById('btnClearSession').classList.add('show');
     document.getElementById('file').value = '';
     document.getElementById('dropLabel').innerHTML = '<strong>Click to choose</strong> or drag a PDF';
   } catch(e) {
@@ -805,7 +819,7 @@ async function regenQA() {
   btn.textContent = '⏳ Generating…';
   btn.disabled = true;
   try {
-    const r = await fetch(`${API}/regenerate-qa/${activeId}`, {method:'POST'});
+    const r = await fetch(`\${API}/regenerate-qa/${activeId}`, {credentials:'include',method:'POST'});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'Failed');
     docs[activeId].suggested_qa = d.suggested_qa;
@@ -820,7 +834,7 @@ async function regenQA() {
 
 async function deleteDoc(e,id){
   e.stopPropagation();
-  const r=await fetch(`${API}/documents/${id}`,{method:'DELETE'});
+  const r=await fetch(`\${API}/documents/${id}`, {credentials:'include',method:'DELETE'});
   if(r.ok){ delete docs[id]; if(activeId===id) selectDoc(null); else renderDocs(); updateCompareSelects(); updateSearchFilterDocs(); }
 }
 
@@ -835,7 +849,7 @@ async function ask() {
   addUserMsg(question); history.push({role:'user',text:question}); updateHistUI();
   const typing=addTyping(); document.getElementById('btnAsk').disabled=true;
   try {
-    const r=await fetch(`${API}/ask`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question,doc_id:activeId})});
+    const r=await fetch(`\${API}/ask`, {credentials:'include',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question,doc_id:activeId})});
     const d=await r.json(); typing.remove();
     if(!r.ok) throw new Error(d.detail||'Error');
     addAiMsg(d); history.push({role:'ai',text:d.answer}); updateHistUI();
@@ -847,7 +861,7 @@ async function rerank(instruction){
   if(!lastQ) return;
   const typing=addTyping(); document.getElementById('btnAsk').disabled=true;
   try {
-    const r=await fetch(`${API}/rerank`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:lastQ,instruction,doc_id:activeId})});
+    const r=await fetch(`\${API}/rerank`, {credentials:'include',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:lastQ,instruction,doc_id:activeId})});
     const d=await r.json(); typing.remove();
     if(!r.ok) throw new Error(d.detail||'Error');
     addSysNote(`↻ Refined: "${instruction}"`);
@@ -974,12 +988,12 @@ async function doSearch(){
   try {
     let allResults=[];
     if(searchAll){
-      const r=await fetch(`${API}/search`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,doc_id:null})});
+      const r=await fetch(`\${API}/search`, {credentials:'include',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,doc_id:null})});
       const d=await r.json();
       if(!r.ok) throw new Error(d.detail||'Search failed');
       allResults=d.results||[];
     } else {
-      const fetches=selectedIds.map(id=>fetch(`${API}/search`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,doc_id:id})}).then(r=>r.json()).then(d=>d.results||[]).catch(()=>[]));
+      const fetches=selectedIds.map(id=>fetch(`\${API}/search`, {credentials:'include',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,doc_id:id})}).then(r=>r.json()).then(d=>d.results||[]).catch(()=>[]));
       const perDocResults=await Promise.all(fetches);
       allResults=perDocResults.flat().sort((a,b)=>b.confidence-a.confidence);
     }
@@ -1015,7 +1029,7 @@ async function loadFullSummary(){
   const body=document.getElementById('fullSummaryBody');
   body.innerHTML='<p style="color:var(--muted)">⏳ Building structured summary… (may take 20–40s)</p>';
   try {
-    const r=await fetch(`${API}/summarize/${activeId}`);
+    const r=await fetch(`\${API}/summarize/${activeId}`, {credentials:'include'});
     const d=await r.json();
     if(!r.ok) throw new Error(d.detail||'Error');
     const sec=(label,icon,content)=>`<div style="margin-bottom:18px"><p style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">${icon} ${label}</p>${content}</div>`;
@@ -1033,7 +1047,7 @@ async function loadExtract(){
   const body=document.getElementById('extractBody');
   body.innerHTML='<p style="color:var(--muted)">Extracting…</p>';
   try {
-    const r=await fetch(`${API}/extract/${activeId}`);
+    const r=await fetch(`\${API}/extract/${activeId}`, {credentials:'include'});
     const d=await r.json();
     if(!r.ok) throw new Error(d.detail||'Error');
     const groups=[
@@ -1066,7 +1080,7 @@ async function doCompare(){
   el.innerHTML='<div class="compare-placeholder">🔍 Step 1/3: Extracting topics from both documents…</div>';
   document.querySelector('.btn-compare').disabled=true;
   try {
-    const r=await fetch(`${API}/compare`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_id_1:id1,doc_id_2:id2,question:q||undefined})});
+    const r=await fetch(`\${API}/compare`, {credentials:'include',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_id_1:id1,doc_id_2:id2,question:q||undefined})});
     const d=await r.json();
     if(!r.ok) throw new Error(d.detail||'Error');
     el.innerHTML='';
@@ -1102,7 +1116,7 @@ async function loadStudy(){
   btn.disabled=true; btn.textContent='Generating…';
   el.innerHTML='<div style="padding:20px;text-align:center;color:var(--muted)">Generating study materials…</div>';
   try {
-    const r=await fetch(`${API}/study/${activeId}`);
+    const r=await fetch(`\${API}/study/${activeId}`, {credentials:'include'});
     const d=await r.json();
     if(!r.ok) throw new Error(d.detail||'Error');
     studyData=d; renderStudy();
@@ -1152,6 +1166,7 @@ function createQuizCard(item, index) {
       btn.textContent = '⏳ Loading answer…';
       try {
         const r = await fetch(`${API}/ask`, {
+          credentials: 'include',
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({question: item.question, doc_id: activeId})
@@ -1183,7 +1198,7 @@ async function loadMoreQuestions(){
   const btn = document.getElementById('btnMoreQuiz');
   btn.disabled=true; btn.textContent='⏳ Loading…';
   try {
-    const r = await fetch(`${API}/study/${activeId}/more?count=5`);
+    const r = await fetch(`\${API}/study/${activeId}/more?count=5`, {credentials:'include'});
     const d = await r.json();
     if(!r.ok) throw new Error(d.detail||'Error');
     const existingQs = new Set((studyData?.quiz||[]).map(q => q.question.toLowerCase().trim()));
@@ -1379,6 +1394,22 @@ function renderMarkdown(text){
 
 function resize(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
 function onKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); ask(); } }
+
+// ── Session management ─────────────────────────────────────────────────────
+async function clearSession(){
+  if(!confirm('Clear your session? All uploaded documents will be permanently deleted.')) return;
+  try {
+    await fetch(`${API}/session`, {method:'DELETE', credentials:'include'});
+  } catch(_) {}
+  docs = {}; activeId = null;
+  renderDocs(); updateCompareSelects(); updateSearchFilterDocs();
+  document.getElementById('sessionNotice').classList.remove('show');
+  document.getElementById('btnClearSession').classList.remove('show');
+  document.getElementById('chat').innerHTML = '<div class="empty-chat" id="emptyChat"><div class="big">Ask anything.</div><p>Upload a PDF, then ask questions.</p></div>';
+  document.getElementById('summaryStrip').classList.remove('show');
+  document.getElementById('qaSection').classList.remove('show');
+  history = []; lastQ = ''; updateHistUI();
+}
 </script>
 </body>
 </html>

@@ -33,15 +33,21 @@ BASE_DIR = Path(__file__).parent
 app = FastAPI()
 embeddings = None
 
-@app.on_event("startup")
-async def startup_event():
+import threading
+
+def _load_embeddings():
     global embeddings
-    # batch_size reduced from 64 → 16 to keep startup memory under 512 MB on Render free tier
+    print("[DocMind] Loading embeddings in background...")
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         encode_kwargs={"batch_size": 16, "normalize_embeddings": True},
     )
     print("[DocMind] Embeddings loaded ✓")
+
+@app.on_event("startup")
+async def startup_event():
+    # Load in background thread so port binds immediately (avoids Render timeout)
+    threading.Thread(target=_load_embeddings, daemon=True).start()
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -57,64 +63,56 @@ def serve_ui():
 # Larger chunks = more context per retrieved passage = fewer wrong-neighbour retrievals
 splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
 
-# ── Persistent ChromaDB (data saved to ./chroma_db, survives restarts) ────────
-_DB_DIR = BASE_DIR / "chroma_db"
-_DB_DIR.mkdir(exist_ok=True)
-_chroma_client = chromadb.PersistentClient(path=str(_DB_DIR))
-db = _chroma_client.get_or_create_collection(
-    name="docs", metadata={"hnsw:space": "cosine"}
-)
-print(f"[DocMind] ChromaDB persistent storage → {_DB_DIR}  ({db.count()} vectors loaded)")
+import json, time
+from fastapi import Cookie
+from fastapi.responses import JSONResponse
 
-# ── Persist documents metadata alongside ChromaDB ─────────────────────────────
-import json
-_DOCS_FILE = BASE_DIR / "chroma_db" / "documents.json"
+# ── In-memory session storage (private per user, auto-deleted after 1 hour) ───
+# Structure: { session_id → { "db": ChromaDB collection, "documents": {}, "bm25_store": {}, "last_active": float } }
+_SESSION_TTL = 3600  # 1 hour in seconds
+_sessions: dict = {}
 
-def _load_documents() -> dict:
-    if _DOCS_FILE.exists():
-        try:
-            with open(_DOCS_FILE) as f:
-                data = json.load(f)
-            print(f"[DocMind] Loaded {len(data)} document records from disk")
-            return data
-        except Exception as e:
-            print(f"[DocMind] Could not load documents.json: {e}")
-    return {}
+def _get_or_create_session(session_id: str) -> dict:
+    """Get existing session or create a new one."""
+    if session_id not in _sessions:
+        client = chromadb.EphemeralClient()
+        collection = client.get_or_create_collection(
+            name="docs", metadata={"hnsw:space": "cosine"}
+        )
+        _sessions[session_id] = {
+            "db": collection,
+            "documents": {},
+            "bm25_store": {},
+            "last_active": time.time(),
+        }
+        print(f"[DocMind] New session created: {session_id[:8]}…")
+    else:
+        _sessions[session_id]["last_active"] = time.time()
+    return _sessions[session_id]
+
+def _cleanup_expired_sessions():
+    """Delete sessions older than TTL."""
+    now = time.time()
+    expired = [sid for sid, s in _sessions.items() if now - s["last_active"] > _SESSION_TTL]
+    for sid in expired:
+        del _sessions[sid]
+        print(f"[DocMind] Session expired and deleted: {sid[:8]}…")
+
+# Run cleanup every hour in background
+import threading
+def _cleanup_loop():
+    while True:
+        time.sleep(600)  # check every 10 minutes
+        _cleanup_expired_sessions()
+threading.Thread(target=_cleanup_loop, daemon=True).start()
+
+# Legacy globals — kept so shared helper functions still work when called with a session
+documents: dict = {}
+bm25_store: dict = {}
+db = None  # replaced per-request by session db
 
 def _save_documents():
-    try:
-        with open(_DOCS_FILE, "w") as f:
-            json.dump(documents, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[DocMind] Could not save documents.json: {e}")
-
-documents: dict = _load_documents()
-
-# ── BM25 index store ───────────────────────────────────────────────────────────
-# Per-document BM25 index for hybrid retrieval.
-# Structure: { doc_id → { "bm25": BM25Okapi, "chunks": [...], "metas": [...] } }
-bm25_store: dict = {}
-
-def _rebuild_bm25():
-    """Rebuild BM25 indexes from persisted ChromaDB data on startup."""
-    if not documents:
-        return
-    print(f"[DocMind] Rebuilding BM25 indexes for {len(documents)} documents…")
-    for doc_id in documents:
-        try:
-            res = db.get(where={"doc_id": doc_id})
-            chunks = res["documents"]
-            metas  = res["metadatas"]
-            if not chunks:
-                continue
-            from rank_bm25 import BM25Okapi
-            tokenized = [re.findall(r'[a-zA-ZàèéìíîòóùúÀÈÉÌÍÎÒÓÙÚ0-9]+', c.lower()) for c in chunks]
-            bm25_store[doc_id] = {"bm25": BM25Okapi(tokenized), "chunks": chunks, "metas": metas}
-        except Exception as e:
-            print(f"[DocMind] BM25 rebuild failed for {doc_id}: {e}")
-    print(f"[DocMind] BM25 indexes ready ✓")
-
-_rebuild_bm25()
+    pass  # no-op: sessions are in-memory only
 
 # ── Cross-encoder reranker (~80 MB, downloaded once) ──────────────────────────
 # ms-marco-MiniLM-L-6-v2: fast reranker that scores (query, passage) pairs.
@@ -319,7 +317,9 @@ class SearchRequest(BaseModel):
 #  STEP 1 — Upload a PDF
 # ─────────────────────────────────────────────
 @app.post("/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...), session_id: str = Cookie(default=None)):
+    if embeddings is None:
+        raise HTTPException(503, "Server is still loading, please wait 30 seconds and try again.")
     if not file.filename.endswith(".pdf"):
         raise HTTPException(400, "Only PDF files are accepted.")
     try:
@@ -327,11 +327,19 @@ async def upload(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(422, "Could not read this PDF.")
 
+    # Create or get session
+    if not session_id:
+        session_id = uuid.uuid4().hex
+    session = _get_or_create_session(session_id)
+    session_db = session["db"]
+    session_docs = session["documents"]
+    session_bm25 = session["bm25_store"]
+
     # ── STEP 2 — Extract + clean text per page ────────
     pages_text = []
     for page_num, page in enumerate(reader.pages, start=1):
         text = page.extract_text() or ""
-        text = _clean(text)   # fix hyphen breaks, math symbols, noise
+        text = _clean(text)
         if text.strip():
             pages_text.append((page_num, text))
 
@@ -341,12 +349,10 @@ async def upload(file: UploadFile = File(...)):
     # ── STEP 3 — Chunk + store in vector DB ───
     doc_id = uuid.uuid4().hex[:12]
     all_chunks, all_meta = [], []
-    i = 0
     for page_num, page_text in pages_text:
         for chunk in splitter.split_text(page_text):
             all_chunks.append(chunk)
             all_meta.append({"doc_id": doc_id, "page": page_num})
-            i += 1
 
     # Embed chunks in batches — kept small to stay under 512 MB on Render free tier
     _EMBED_BATCH = 16
@@ -357,10 +363,9 @@ async def upload(file: UploadFile = File(...)):
 
     all_ids = [f"{doc_id}_{idx}" for idx in range(len(all_chunks))]
 
-    # Insert into ChromaDB in batches of 500 (Chroma has a default limit)
     _DB_BATCH = 500
     for start in range(0, len(all_chunks), _DB_BATCH):
-        db.add(
+        session_db.add(
             documents=all_chunks[start: start + _DB_BATCH],
             embeddings=all_vectors[start: start + _DB_BATCH],
             ids=all_ids[start: start + _DB_BATCH],
@@ -369,7 +374,7 @@ async def upload(file: UploadFile = File(...)):
 
     # ── Build BM25 index for this document ────────────────────────────────────
     tokenized = [_tokenize(c) for c in all_chunks]
-    bm25_store[doc_id] = {
+    session_bm25[doc_id] = {
         "bm25":   BM25Okapi(tokenized),
         "chunks": all_chunks,
         "metas":  all_meta,
@@ -378,57 +383,60 @@ async def upload(file: UploadFile = File(...)):
     summary      = _summarize(all_chunks)
     suggested_qa = _generate_qa(all_chunks)
 
-    documents[doc_id] = {
+    session_docs[doc_id] = {
         "name":         file.filename,
         "summary":      summary,
         "chunks":       len(all_chunks),
         "pages":        len(pages_text),
         "suggested_qa": suggested_qa,
     }
-    _save_documents()
 
-    return {
+    response = JSONResponse({
         "doc_id":       doc_id,
         "filename":     file.filename,
         "chunks":       len(all_chunks),
         "pages":        len(pages_text),
         "summary":      summary,
         "suggested_qa": suggested_qa,
-    }
+        "session_notice": "⚠️ Your documents are private and stored only for this session. They will be automatically deleted after 1 hour of inactivity or when you close the app.",
+    })
+    response.set_cookie("session_id", session_id, max_age=_SESSION_TTL, httponly=True, samesite="lax")
+    return response
 
 
 # ─────────────────────────────────────────────
 #  STEP 4 — User asks a question
 # ─────────────────────────────────────────────
 @app.post("/ask")
-def ask(body: Question):
+def ask(body: Question, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "No session found. Please upload a document first.")
+    session = _get_or_create_session(session_id)
+    if session["db"].count() == 0:
+        raise HTTPException(404, "No documents uploaded yet.")
     if not body.question.strip():
         raise HTTPException(400, "Question cannot be empty.")
-    if db.count() == 0:
-        raise HTTPException(404, "No documents uploaded yet.")
-    result = _query(body.question, body.doc_id, n=5)
-    # Generate answer using Groq (Llama 3.1)
+    result = _query(body.question, body.doc_id, n=5, session=session)
     result["answer"] = _generate_answer(body.question, result["passages"])
     return result
 
 
 # ── Re-rank ────────────────────────────────────────────────────────────────────
 @app.post("/rerank")
-def rerank(body: Rerank):
-    if db.count() == 0:
+def rerank(body: Rerank, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "No session found. Please upload a document first.")
+    session = _get_or_create_session(session_id)
+    if session["db"].count() == 0:
         raise HTTPException(404, "No documents uploaded yet.")
     inst = body.instruction.lower()
 
     if any(w in inst for w in ["specific", "precise"]):
-        # Most precise single match
-        result = _query(body.question, body.doc_id, n=1)
+        result = _query(body.question, body.doc_id, n=1, session=session)
         result["rerank_mode"] = "precise"
         return result
-
     elif any(w in inst for w in ["simple", "brief", "short"]):
-        # Shortest top chunk
-        result = _query(body.question, body.doc_id, n=3)
-        # Pick the shortest passage among top 3
+        result = _query(body.question, body.doc_id, n=3, session=session)
         passages = result.get("passages", [])
         if passages:
             shortest = min(passages, key=lambda p: len(p["text"]))
@@ -436,29 +444,29 @@ def rerank(body: Rerank):
             result["page"]   = shortest["page"]
         result["rerank_mode"] = "brief"
         return result
-
     elif any(w in inst for w in ["detail", "more", "explain", "elaborate"]):
-        # Retrieve top 5 and concatenate all passages into a richer answer
-        result = _query(body.question, body.doc_id, n=5)
+        result = _query(body.question, body.doc_id, n=5, session=session)
         passages = result.get("passages", [])
         if passages:
             combined = " ".join(p["text"] for p in passages)
             result["answer"] = combined
         result["rerank_mode"] = "detailed"
         return result
-
     else:
-        result = _query(f"{body.question} {body.instruction}", body.doc_id, n=3)
+        result = _query(f"{body.question} {body.instruction}", body.doc_id, n=3, session=session)
         result["rerank_mode"] = "refined"
         return result
 
 
 # ── Feature 3: Summarize a document ───────────────────────────────────────────
 @app.get("/summarize/{doc_id}")
-def summarize(doc_id: str):
-    if doc_id not in documents:
+def summarize(doc_id: str, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "Session not found.")
+    session = _get_or_create_session(session_id)
+    if doc_id not in session["documents"]:
         raise HTTPException(404, "Document not found.")
-    res    = db.get(where={"doc_id": doc_id})
+    res    = session["db"].get(where={"doc_id": doc_id})
     chunks = [_clean(c) for c in res["documents"]]
     doc_type = _detect_doc_type(chunks)
     return _build_structured_summary(chunks, doc_type)
@@ -466,10 +474,13 @@ def summarize(doc_id: str):
 
 # ── Feature 6: Extract key information ────────────────────────────────────────
 @app.get("/extract/{doc_id}")
-def extract(doc_id: str):
-    if doc_id not in documents:
+def extract(doc_id: str, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "Session not found.")
+    session = _get_or_create_session(session_id)
+    if doc_id not in session["documents"]:
         raise HTTPException(404, "Document not found.")
-    res  = db.get(where={"doc_id": doc_id})
+    res  = session["db"].get(where={"doc_id": doc_id})
     text = " ".join(res["documents"])
     return {
         "people":    _extract_people(text),
@@ -501,12 +512,12 @@ def _is_boilerplate(text: str) -> bool:
         return True
     return False
 
-def _tag_chunks_with_topics(doc_id: str, question: str) -> list[dict]:
+def _tag_chunks_with_topics(doc_id: str, question: str, session: dict) -> list[dict]:
     """
     Sample up to 8 non-boilerplate chunks, truncate to 200 chars each,
     tag with topic + numbers using the fast 8b model (<4000 tokens total).
     """
-    res    = db.get(where={"doc_id": doc_id})
+    res    = session["db"].get(where={"doc_id": doc_id})
     chunks = [(c, m) for c, m in zip(res["documents"], res["metadatas"])
               if not _is_boilerplate(_clean(c))]
 
@@ -623,30 +634,25 @@ def _generate_comparison(question: str, name1: str, tagged1: list,
     )
 
 @app.post("/compare")
-def compare(body: CompareRequest):
+def compare(body: CompareRequest, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "Session not found.")
+    session = _get_or_create_session(session_id)
     for did in [body.doc_id_1, body.doc_id_2]:
-        if did not in documents:
+        if did not in session["documents"]:
             raise HTTPException(404, f"Document {did} not found.")
 
-    name1 = documents[body.doc_id_1]["name"]
-    name2 = documents[body.doc_id_2]["name"]
-
-    # Step 1 — Retrieve, tag topics, extract numbers for each doc
-    tagged1 = _tag_chunks_with_topics(body.doc_id_1, body.question)
-    tagged2 = _tag_chunks_with_topics(body.doc_id_2, body.question)
-
-    # Step 2 — Filter to relevant chunks for the passages display
+    name1 = session["documents"][body.doc_id_1]["name"]
+    name2 = session["documents"][body.doc_id_2]["name"]
+    tagged1 = _tag_chunks_with_topics(body.doc_id_1, body.question, session)
+    tagged2 = _tag_chunks_with_topics(body.doc_id_2, body.question, session)
     relevant1 = [t for t in tagged1 if t.get("relevant")][:8] or tagged1[:8]
     relevant2 = [t for t in tagged2 if t.get("relevant")][:8] or tagged2[:8]
-
-    # Step 3 — LLM comparison with topic-aware numeric validation
     analysis = _generate_comparison(body.question, name1, tagged1, name2, tagged2)
 
-    # Format for frontend (convert tagged → result format)
     def to_results(tagged):
         return [{"text": t["text"], "page": t["page"],
                  "confidence": 0, "topic": t["topic"]} for t in tagged]
-
     return {
         "question": body.question,
         "analysis": analysis,
@@ -657,20 +663,24 @@ def compare(body: CompareRequest):
 
 # ── Feature 8: Search documents ───────────────────────────────────────────────
 @app.post("/search")
-def search(body: SearchRequest):
-    if db.count() == 0:
+def search(body: SearchRequest, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "Session not found. Please upload a document first.")
+    session = _get_or_create_session(session_id)
+    session_db = session["db"]
+    if session_db.count() == 0:
         raise HTTPException(404, "No documents uploaded yet.")
     if not body.query.strip():
         raise HTTPException(400, "Search query cannot be empty.")
     q_vec = embeddings.embed_query(body.query)
     args = {
         "query_embeddings": [q_vec],
-        "n_results":        min(6, db.count()),
+        "n_results":        min(6, session_db.count()),
         "include":          ["documents", "distances", "metadatas"],
     }
     if body.doc_id:
         args["where"] = {"doc_id": body.doc_id}
-    r = db.query(**args)
+    r = session_db.query(**args)
     return {
         "query":   body.query,
         "results": [
@@ -679,7 +689,7 @@ def search(body: SearchRequest):
                 "confidence": _to_confidence(dist),
                 "page":       meta.get("page"),
                 "doc_id":     meta.get("doc_id"),
-                "filename":   documents.get(meta.get("doc_id"), {}).get("name", "Unknown"),
+                "filename":   session["documents"].get(meta.get("doc_id"), {}).get("name", "Unknown"),
             }
             for doc, dist, meta in zip(r["documents"][0], r["distances"][0], r["metadatas"][0])
         ],
@@ -688,10 +698,13 @@ def search(body: SearchRequest):
 
 # ── Feature 10: Study mode ────────────────────────────────────────────────────
 @app.get("/study/{doc_id}")
-def study(doc_id: str):
-    if doc_id not in documents:
+def study(doc_id: str, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "Session not found.")
+    session = _get_or_create_session(session_id)
+    if doc_id not in session["documents"]:
         raise HTTPException(404, "Document not found.")
-    res    = db.get(where={"doc_id": doc_id})
+    res    = session["db"].get(where={"doc_id": doc_id})
     chunks = [_clean(c) for c in res["documents"]]
     return {
         "quiz":       _generate_qa(chunks, max_questions=8),
@@ -699,42 +712,60 @@ def study(doc_id: str):
     }
 
 @app.get("/study/{doc_id}/more")
-def study_more(doc_id: str, count: int = 5):
-    """Generate additional quiz questions (different from initial set)."""
-    if doc_id not in documents:
+def study_more(doc_id: str, count: int = 5, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "Session not found.")
+    session = _get_or_create_session(session_id)
+    if doc_id not in session["documents"]:
         raise HTTPException(404, "Document not found.")
-    res    = db.get(where={"doc_id": doc_id})
+    res    = session["db"].get(where={"doc_id": doc_id})
     chunks = [_clean(c) for c in res["documents"]]
     return {"quiz": _generate_qa(chunks, max_questions=count)}
 
 
 # ── Document management ────────────────────────────────────────────────────────
 @app.get("/documents")
-def list_documents():
-    return {"documents": [{"doc_id": k, **v} for k, v in documents.items()]}
+def list_documents(session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        return {"documents": []}
+    session = _get_or_create_session(session_id)
+    return {"documents": [{"doc_id": k, **v} for k, v in session["documents"].items()]}
 
 @app.post("/regenerate-qa/{doc_id}")
-def regenerate_qa(doc_id: str):
-    if doc_id not in documents:
+def regenerate_qa(doc_id: str, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "Session not found.")
+    session = _get_or_create_session(session_id)
+    if doc_id not in session["documents"]:
         raise HTTPException(404, "Document not found.")
-    res    = db.get(where={"doc_id": doc_id})
+    res    = session["db"].get(where={"doc_id": doc_id})
     chunks = [_clean(c) for c in res["documents"]]
     suggested_qa = _generate_qa(chunks, max_questions=5)
-    documents[doc_id]["suggested_qa"] = suggested_qa
-    _save_documents()
+    session["documents"][doc_id]["suggested_qa"] = suggested_qa
     return {"doc_id": doc_id, "suggested_qa": suggested_qa}
 
 @app.delete("/documents/{doc_id}")
-def delete_document(doc_id: str):
-    if doc_id not in documents:
+def delete_document(doc_id: str, session_id: str = Cookie(default=None)):
+    if not session_id or session_id not in _sessions:
+        raise HTTPException(404, "Session not found.")
+    session = _get_or_create_session(session_id)
+    if doc_id not in session["documents"]:
         raise HTTPException(404, "Document not found.")
-    ids = db.get(where={"doc_id": doc_id})["ids"]
+    ids = session["db"].get(where={"doc_id": doc_id})["ids"]
     if ids:
-        db.delete(ids=ids)
-    del documents[doc_id]
-    bm25_store.pop(doc_id, None)
-    _save_documents()
-    return {"deleted": doc_id}
+        session["db"].delete(ids=ids)
+    del session["documents"][doc_id]
+    session["bm25_store"].pop(doc_id, None)
+    return {"deleted": doc_id, "message": "Document deleted from your private session."}
+
+@app.delete("/session")
+def delete_session(session_id: str = Cookie(default=None)):
+    """Manually clear the entire session and all uploaded documents."""
+    if session_id and session_id in _sessions:
+        del _sessions[session_id]
+    response = JSONResponse({"message": "✅ Your session has been cleared. All uploaded documents have been permanently deleted."})
+    response.delete_cookie("session_id")
+    return response
 
 
 # ── Shared query logic ─────────────────────────────────────────────────────────
@@ -769,18 +800,19 @@ def _rewrite_query(question: str) -> str:
         return question
 
 
-def _bm25_search(query: str, doc_id: str | None, top_k: int) -> list[dict]:
+def _bm25_search(query: str, doc_id: str | None, top_k: int, session: dict) -> list[dict]:
     """
-    BM25 keyword search across the bm25_store.
+    BM25 keyword search across the session bm25_store.
     Returns up to top_k results as dicts with text, page, doc_id, bm25_score.
     """
     tokens = _tokenize(query)
     results = []
+    s_bm25 = session["bm25_store"]
 
-    target_ids = [doc_id] if doc_id and doc_id in bm25_store else list(bm25_store.keys())
+    target_ids = [doc_id] if doc_id and doc_id in s_bm25 else list(s_bm25.keys())
 
     for did in target_ids:
-        entry  = bm25_store[did]
+        entry  = s_bm25[did]
         scores = entry["bm25"].get_scores(tokens)
         chunks = entry["chunks"]
         metas  = entry["metas"]
@@ -800,7 +832,7 @@ def _bm25_search(query: str, doc_id: str | None, top_k: int) -> list[dict]:
     return results[:top_k]
 
 
-def _query(question: str, doc_id: str | None, n: int) -> dict:
+def _query(question: str, doc_id: str | None, n: int, session: dict) -> dict:
     """
     Hybrid retrieval pipeline:
       1. Query rewriting  — expand + densify the query via Groq
@@ -810,7 +842,8 @@ def _query(question: str, doc_id: str | None, n: int) -> dict:
       5. Cross-encoder reranker — score top merged candidates
       6. Return top-n passages + best as answer seed
     """
-    CANDIDATES = min(10, db.count())
+    session_db = session["db"]
+    CANDIDATES = min(10, session_db.count())
 
     # ── Step 1: Query rewriting ───────────────────────────────────────────────
     rewritten = _rewrite_query(question)
@@ -825,14 +858,14 @@ def _query(question: str, doc_id: str | None, n: int) -> dict:
     }
     if doc_id:
         args["where"] = {"doc_id": doc_id}
-    r = db.query(**args)
+    r = session_db.query(**args)
 
     vec_docs  = r["documents"][0]
     vec_dists = r["distances"][0]
     vec_metas = r["metadatas"][0]
 
     # ── Step 3: BM25 keyword search ───────────────────────────────────────────
-    bm25_results = _bm25_search(search_q, doc_id, top_k=CANDIDATES)
+    bm25_results = _bm25_search(search_q, doc_id, top_k=CANDIDATES, session=session)
 
     # ── Step 4: Reciprocal Rank Fusion (RRF) ─────────────────────────────────
     # RRF score = Σ 1/(k + rank)  where k=60 is standard
@@ -878,14 +911,14 @@ def _query(question: str, doc_id: str | None, n: int) -> dict:
         "answer":     top_chunk,
         "confidence": _to_confidence(merged_dists[0]),
         "page":       top_meta.get("page"),
-        "filename":   documents.get(top_meta.get("doc_id"), {}).get("name"),
+        "filename":   session["documents"].get(top_meta.get("doc_id"), {}).get("name"),
         "rewritten_query": rewritten if rewritten != question else None,
         "passages": [
             {
                 "text":       _clean(doc),
                 "confidence": _to_confidence(dist),
                 "page":       meta.get("page"),
-                "filename":   documents.get(meta.get("doc_id"), {}).get("name"),
+                "filename":   session["documents"].get(meta.get("doc_id"), {}).get("name"),
             }
             for doc, dist, meta in zip(merged_docs, merged_dists, merged_metas)
         ],
