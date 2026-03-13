@@ -5,6 +5,112 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pypdf import PdfReader
+import io
+
+# ── Multi-format text extraction ──────────────────────────────────────────────
+_SUPPORTED_EXTENSIONS = {
+    '.pdf', '.docx', '.doc', '.pptx', '.ppt',
+    '.xlsx', '.xls', '.csv', '.txt', '.md', '.rtf',
+}
+
+def _extract_text_from_file(filename: str, file_bytes: bytes) -> list[tuple[int, str]]:
+    """
+    Extract text from various file types.
+    Returns list of (page_num, text) tuples, mirroring the PDF extractor output.
+    """
+    ext = ('.' + filename.rsplit('.', 1)[-1]).lower() if '.' in filename else ''
+
+    # ── PDF ──────────────────────────────────────────────────────────────────
+    if ext == '.pdf':
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(file_bytes))
+        pages = []
+        for i, page in enumerate(reader.pages, start=1):
+            text = _clean(page.extract_text() or '')
+            if text.strip():
+                pages.append((i, text))
+        return pages
+
+    # ── Word (.docx) ─────────────────────────────────────────────────────────
+    if ext in ('.docx', '.doc'):
+        import docx as _docx
+        doc = _docx.Document(io.BytesIO(file_bytes))
+        paras = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+        # Group every 20 paragraphs as one "page"
+        pages, chunk_size = [], 20
+        for i in range(0, max(len(paras), 1), chunk_size):
+            text = _clean('\n'.join(paras[i:i+chunk_size]))
+            if text.strip():
+                pages.append((i // chunk_size + 1, text))
+        return pages or [(1, _clean(' '.join(paras)) or 'Empty document')]
+
+    # ── PowerPoint (.pptx) ───────────────────────────────────────────────────
+    if ext in ('.pptx', '.ppt'):
+        from pptx import Presentation
+        prs = Presentation(io.BytesIO(file_bytes))
+        pages = []
+        for i, slide in enumerate(prs.slides, start=1):
+            parts = []
+            for shape in slide.shapes:
+                if hasattr(shape, 'text') and shape.text.strip():
+                    parts.append(shape.text.strip())
+            text = _clean('\n'.join(parts))
+            if text.strip():
+                pages.append((i, text))
+        return pages
+
+    # ── Excel (.xlsx / .xls) ─────────────────────────────────────────────────
+    if ext in ('.xlsx', '.xls'):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+        pages = []
+        for sheet_num, ws in enumerate(wb.worksheets, start=1):
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c) if c is not None else '' for c in row]
+                line = '\t'.join(cells).strip()
+                if line and line != '\t' * (len(cells)-1):
+                    rows.append(line)
+            text = _clean('\n'.join(rows))
+            if text.strip():
+                pages.append((sheet_num, f"[Sheet: {ws.title}]\n{text}"))
+        wb.close()
+        return pages
+
+    # ── CSV ──────────────────────────────────────────────────────────────────
+    if ext == '.csv':
+        import csv as _csv
+        text_io = io.StringIO(file_bytes.decode('utf-8', errors='replace'))
+        reader = _csv.reader(text_io)
+        rows = ['\t'.join(r) for r in reader if any(c.strip() for c in r)]
+        text = _clean('\n'.join(rows))
+        # Split into ~100-row pages
+        chunk_size = 100
+        pages = []
+        for i in range(0, max(len(rows), 1), chunk_size):
+            t = _clean('\n'.join(rows[i:i+chunk_size]))
+            if t.strip():
+                pages.append((i // chunk_size + 1, t))
+        return pages
+
+    # ── Plain text / Markdown / RTF ──────────────────────────────────────────
+    if ext in ('.txt', '.md', '.rtf'):
+        raw = file_bytes.decode('utf-8', errors='replace')
+        # Strip basic RTF control words
+        if ext == '.rtf':
+            raw = re.sub(r'\\[a-z]+\d*\s?', ' ', raw)
+            raw = re.sub(r'[{}]', '', raw)
+        lines = raw.split('\n')
+        chunk_size = 60
+        pages = []
+        for i in range(0, max(len(lines), 1), chunk_size):
+            text = _clean('\n'.join(lines[i:i+chunk_size]))
+            if text.strip():
+                pages.append((i // chunk_size + 1, text))
+        return pages
+
+    raise ValueError(f"Unsupported file type: {ext or 'unknown'}")
+
 from groq import Groq
 from rank_bm25 import BM25Okapi
 # Heavy ML imports are deferred to background thread to avoid Render port timeout
@@ -38,29 +144,19 @@ def _load_embeddings():
     if embeddings is not None:
         return  # already loaded, prevent duplicate loading
     print("[DocMind] Loading ML dependencies in background...")
-    try:
-        import gc
-        from transformers import logging as hf_logging
-        hf_logging.set_verbosity_error()
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-        from langchain_huggingface import HuggingFaceEmbeddings
-
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-        print("[DocMind] Splitter ready, loading embedding model...")
-
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/paraphrase-MiniLM-L6-v2",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"batch_size": 8, "normalize_embeddings": True},
-        )
-        gc.collect()
-        print("[DocMind] Embeddings loaded ✓")
-    except Exception as e:
-        global _load_error
-        _load_error = str(e)
-        print(f"[DocMind] ERROR loading embeddings: {e}")
-        import traceback
-        traceback.print_exc()
+    # Import heavy libraries only now (avoids slow startup / Render port timeout)
+    import gc
+    from transformers import logging as hf_logging
+    hf_logging.set_verbosity_error()
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_huggingface import HuggingFaceEmbeddings
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        encode_kwargs={"batch_size": 64, "normalize_embeddings": True},
+    )
+    gc.collect()  # free unused memory after model load
+    print("[DocMind] Embeddings loaded ✓")
 
 @app.on_event("startup")
 async def startup_event():
@@ -73,15 +169,12 @@ app.add_middleware(
 # Serve style.css, script.js and any other static assets from the project folder
 app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
 
-_load_error = None
-
 @app.get("/health")
 def health():
     """Used by frontend to poll until server is ready."""
     if embeddings is None or splitter is None:
         from fastapi.responses import JSONResponse as JR
-        msg = f"Loading failed: {_load_error}" if _load_error else "Loading AI models…"
-        return JR({"ready": False, "message": msg}, status_code=503)
+        return JR({"ready": False, "message": "Loading AI models…"}, status_code=503)
     return {"ready": True, "message": "Server ready"}
 
 @app.get("/")
@@ -98,52 +191,59 @@ import json, time
 from fastapi import Cookie
 from fastapi.responses import JSONResponse
 
-# ── In-memory session storage (private per user, auto-deleted after 1 hour) ───
-# Structure: { session_id → { "db": ChromaDB collection, "documents": {}, "bm25_store": {}, "last_active": float } }
-_SESSION_TTL = 3600  # 1 hour in seconds
+# ── Persistent ChromaDB (local use — data saved to ./chroma_db) ───────────────
+_DB_DIR = BASE_DIR / "chroma_db"
+_DB_DIR.mkdir(exist_ok=True)
+_chroma_client = chromadb.PersistentClient(path=str(_DB_DIR))
+_SESSION_TTL = 3600
 _sessions: dict = {}
 
+# ── Load existing documents from disk on startup ───────────────────────────────
+_DOCS_FILE = _DB_DIR / "documents.json"
+
+def _load_documents_from_disk() -> dict:
+    if _DOCS_FILE.exists():
+        try:
+            with open(_DOCS_FILE) as f:
+                data = json.load(f)
+            print(f"[DocMind] Loaded {len(data)} document records from disk")
+            return data
+        except Exception as e:
+            print(f"[DocMind] Could not load documents.json: {e}")
+    return {}
+
+def _save_documents_to_disk(documents: dict):
+    try:
+        with open(_DOCS_FILE, "w") as f:
+            json.dump(documents, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[DocMind] Could not save documents.json: {e}")
+
 def _get_or_create_session(session_id: str) -> dict:
-    """Get existing session or create a new one."""
+    """Get existing session or create a new one with persistent ChromaDB."""
     if session_id not in _sessions:
-        client = chromadb.EphemeralClient()
-        collection = client.get_or_create_collection(
-            name="docs", metadata={"hnsw:space": "cosine"}
+        collection = _chroma_client.get_or_create_collection(
+            name=f"docs_{session_id[:8]}",
+            metadata={"hnsw:space": "cosine"}
         )
         _sessions[session_id] = {
             "db": collection,
-            "documents": {},
+            "documents": _load_documents_from_disk(),
             "bm25_store": {},
             "last_active": time.time(),
         }
-        print(f"[DocMind] New session created: {session_id[:8]}…")
+        print(f"[DocMind] Session created: {session_id[:8]}…")
     else:
         _sessions[session_id]["last_active"] = time.time()
     return _sessions[session_id]
 
-def _cleanup_expired_sessions():
-    """Delete sessions older than TTL."""
-    now = time.time()
-    expired = [sid for sid, s in _sessions.items() if now - s["last_active"] > _SESSION_TTL]
-    for sid in expired:
-        del _sessions[sid]
-        print(f"[DocMind] Session expired and deleted: {sid[:8]}…")
-
-# Run cleanup every hour in background
-import threading
-def _cleanup_loop():
-    while True:
-        time.sleep(600)  # check every 10 minutes
-        _cleanup_expired_sessions()
-threading.Thread(target=_cleanup_loop, daemon=True).start()
-
-# Legacy globals — kept so shared helper functions still work when called with a session
+# Legacy globals
 documents: dict = {}
 bm25_store: dict = {}
-db = None  # replaced per-request by session db
+db = None
 
 def _save_documents():
-    pass  # no-op: sessions are in-memory only
+    pass  # handled per-session
 
 # ── Cross-encoder reranker (~80 MB, downloaded once) ──────────────────────────
 # ms-marco-MiniLM-L-6-v2: fast reranker that scores (query, passage) pairs.
@@ -351,12 +451,18 @@ class SearchRequest(BaseModel):
 async def upload(file: UploadFile = File(...), session_id: str = Cookie(default=None)):
     if embeddings is None or splitter is None:
         raise HTTPException(503, "Server is still loading, please wait 30 seconds and try again.")
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files are accepted.")
+
+    ext = ('.' + file.filename.rsplit('.', 1)[-1]).lower() if '.' in file.filename else ''
+    if ext not in _SUPPORTED_EXTENSIONS:
+        raise HTTPException(400, f"Unsupported file type '{ext}'. Supported: PDF, Word, PowerPoint, Excel, CSV, TXT, Markdown.")
+
+    file_bytes = await file.read()
     try:
-        reader = PdfReader(file.file)
+        pages_text = _extract_text_from_file(file.filename, file_bytes)
+    except ValueError as ve:
+        raise HTTPException(400, str(ve))
     except Exception:
-        raise HTTPException(422, "Could not read this PDF.")
+        raise HTTPException(422, f"Could not read this file. Make sure it is a valid {ext.lstrip('.')} document.")
 
     # Create or get session
     if not session_id:
@@ -366,16 +472,8 @@ async def upload(file: UploadFile = File(...), session_id: str = Cookie(default=
     session_docs = session["documents"]
     session_bm25 = session["bm25_store"]
 
-    # ── STEP 2 — Extract + clean text per page ────────
-    pages_text = []
-    for page_num, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
-        text = _clean(text)
-        if text.strip():
-            pages_text.append((page_num, text))
-
     if not pages_text:
-        raise HTTPException(422, "No text found in this PDF.")
+        raise HTTPException(422, "No text could be extracted from this file.")
 
     # ── STEP 3 — Chunk + store in vector DB ───
     doc_id = uuid.uuid4().hex[:12]
@@ -385,8 +483,8 @@ async def upload(file: UploadFile = File(...), session_id: str = Cookie(default=
             all_chunks.append(chunk)
             all_meta.append({"doc_id": doc_id, "page": page_num})
 
-    # Embed chunks in batches — kept small to stay under 512 MB on Render free tier
-    _EMBED_BATCH = 8
+    # Embed chunks in full batches for local performance
+    _EMBED_BATCH = 64
     all_vectors = []
     for start in range(0, len(all_chunks), _EMBED_BATCH):
         batch = all_chunks[start: start + _EMBED_BATCH]
@@ -773,6 +871,7 @@ def regenerate_qa(doc_id: str, session_id: str = Cookie(default=None)):
     chunks = [_clean(c) for c in res["documents"]]
     suggested_qa = _generate_qa(chunks, max_questions=5)
     session["documents"][doc_id]["suggested_qa"] = suggested_qa
+    _save_documents_to_disk(session["documents"])
     return {"doc_id": doc_id, "suggested_qa": suggested_qa}
 
 @app.delete("/documents/{doc_id}")
@@ -787,7 +886,8 @@ def delete_document(doc_id: str, session_id: str = Cookie(default=None)):
         session["db"].delete(ids=ids)
     del session["documents"][doc_id]
     session["bm25_store"].pop(doc_id, None)
-    return {"deleted": doc_id, "message": "Document deleted from your private session."}
+    _save_documents_to_disk(session["documents"])
+    return {"deleted": doc_id, "message": "Document deleted."}
 
 @app.delete("/session")
 def delete_session(session_id: str = Cookie(default=None)):
@@ -874,7 +974,7 @@ def _query(question: str, doc_id: str | None, n: int, session: dict) -> dict:
       6. Return top-n passages + best as answer seed
     """
     session_db = session["db"]
-    CANDIDATES = min(6, session_db.count())
+    CANDIDATES = min(10, session_db.count())
 
     # ── Step 1: Query rewriting ───────────────────────────────────────────────
     rewritten = _rewrite_query(question)
@@ -1546,7 +1646,566 @@ def _extract_numbers(text: str) -> list[str]:
             numbers.add(ctx)
     return sorted(list(numbers))[:10]
 
-def _extract_topics(text: str) -> list[str]:
+
+# ── Bank Statement Analysis ────────────────────────────────────────────────────
+
+import re as _re
+from datetime import datetime
+
+def _parse_bank_transactions(text: str) -> list[dict]:
+    """
+    Parse bank transactions from raw PDF text.
+    Supports Italian and English bank statement formats.
+    Returns list of {date, description, amount} dicts.
+    """
+    transactions = []
+
+    # Normalise whitespace
+    text = re.sub(r'\r\n|\r', '\n', text)
+    lines = text.split('\n')
+
+    # Date patterns: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD, DD MMM YYYY, DD.MM.YYYY
+    date_patterns = [
+        r'\b(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4})\b',
+        r'\b(\d{4}[\/\-\.]\d{2}[\/\-\.]\d{2})\b',
+        r'\b(\d{1,2}\s+(?:gen|feb|mar|apr|mag|giu|lug|ago|set|ott|nov|dic|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{4})\b',
+    ]
+
+    # Amount pattern: handles both Italian (1.234,56) and English (1,234.56) formats
+    # Also captures optional +/- sign and common EUR/GBP/USD symbols
+    amount_pattern = re.compile(
+        r'([+\-])?\s*(?:EUR|€|\$|£)?\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\s*(?:EUR|€|\$|£)?'
+    )
+
+    def parse_date(s: str) -> str | None:
+        s = s.strip()
+        # Italian month names
+        ita_months = {'gen':'01','feb':'02','mar':'03','apr':'04','mag':'05','giu':'06',
+                      'lug':'07','ago':'08','set':'09','ott':'10','nov':'11','dic':'12'}
+        for k, v in ita_months.items():
+            s = re.sub(rf'\b{k}\w*\b', v, s, flags=re.IGNORECASE)
+        for fmt in ['%d/%m/%Y','%d-%m-%Y','%d.%m.%Y','%Y-%m-%d','%Y/%m/%d',
+                    '%d/%m/%y','%d %m %Y','%d %m %y']:
+            try:
+                return datetime.strptime(s, fmt).strftime('%Y-%m-%d')
+            except ValueError:
+                pass
+        return None
+
+    def parse_amount(s: str) -> float | None:
+        """Convert Italian/English formatted number to float."""
+        s = s.strip().replace(' ', '')
+        # Detect format: if last separator is ',' and penultimate is '.': Italian 1.234,56
+        if re.match(r'^\d{1,3}(\.\d{3})*(,\d{2})$', s):
+            s = s.replace('.', '').replace(',', '.')
+        # If last separator is '.' and penultimate is ',': English 1,234.56
+        elif re.match(r'^\d{1,3}(,\d{3})*(\.\d{2})$', s):
+            s = s.replace(',', '')
+        else:
+            # Generic cleanup
+            s = s.replace(',', '.')
+            # If multiple dots, keep only last as decimal
+            parts = s.split('.')
+            if len(parts) > 2:
+                s = ''.join(parts[:-1]) + '.' + parts[-1]
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    seen = set()
+
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if not line or len(line) < 8:
+            continue
+
+        # Try to extract a date from the line
+        date_str = None
+        for dp in date_patterns:
+            m = re.search(dp, line, re.IGNORECASE)
+            if m:
+                date_str = parse_date(m.group(1))
+                if date_str:
+                    break
+
+        if not date_str:
+            continue
+
+        # Extract all amounts from the line
+        amounts_found = amount_pattern.findall(line)
+        if not amounts_found:
+            # Check adjacent lines (±1) for amount
+            adjacent = '\n'.join(lines[max(0,i-1):i+2])
+            amounts_found = amount_pattern.findall(adjacent)
+
+        if not amounts_found:
+            continue
+
+        # Take the last (rightmost) amount, most likely to be the transaction value
+        sign_str, raw_amt = amounts_found[-1]
+        amount = parse_amount(raw_amt)
+        if amount is None or amount == 0:
+            continue
+
+        # Determine sign: look for debit/credit keywords
+        line_lower = line.lower()
+        credit_kw = ['accredito','bonifico in entrata','versamento','stipendio','rimborso',
+                     'credit','deposit','incoming','received','entrata','avere','dare',
+                     'ricarica','pagamento ricevuto']
+        debit_kw  = ['addebito','pagamento','prelievo','commissione','spesa','canone',
+                     'debit','withdrawal','payment','charge','fee','uscita','atm',
+                     'pos','utenza','bolletta']
+
+        is_credit = any(kw in line_lower for kw in credit_kw)
+        is_debit  = any(kw in line_lower for kw in debit_kw)
+
+        if sign_str == '+' or is_credit:
+            signed_amount = abs(amount)
+        elif sign_str == '-' or is_debit:
+            signed_amount = -abs(amount)
+        else:
+            # Heuristic: if two amounts found on line, second is usually balance
+            if len(amounts_found) >= 2:
+                _, raw2 = amounts_found[0]
+                signed_amount = parse_amount(raw2)
+                if signed_amount is None:
+                    continue
+                # negative if amount reduces, positive otherwise — default debit
+                signed_amount = -abs(signed_amount)
+            else:
+                # Default: treat as debit (outgoing)
+                signed_amount = -abs(amount)
+
+        # Build description: strip date and amount tokens from line
+        desc = re.sub(r'\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b', '', line)
+        desc = amount_pattern.sub('', desc)
+        desc = re.sub(r'[+\-]\s*(?:EUR|€|\$|£)?', '', desc)
+        desc = re.sub(r'\s{2,}', ' ', desc).strip(' |-_/')
+        if not desc:
+            desc = 'Transaction'
+
+        # Dedup
+        key = (date_str, round(signed_amount, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        transactions.append({
+            'date':        date_str,
+            'description': desc[:120],
+            'amount':      round(signed_amount, 2),
+        })
+
+    # Sort by date
+    transactions.sort(key=lambda t: t['date'])
+    return transactions
+
+
+def _aggregate_monthly(transactions: list[dict]) -> list[dict]:
+    """Aggregate transactions by month."""
+    monthly: dict[str, dict] = {}
+    for t in transactions:
+        month = t['date'][:7]  # YYYY-MM
+        if month not in monthly:
+            monthly[month] = {'month': month, 'income': 0.0, 'expense': 0.0}
+        if t['amount'] >= 0:
+            monthly[month]['income'] += t['amount']
+        else:
+            monthly[month]['expense'] += abs(t['amount'])
+    result = sorted(monthly.values(), key=lambda m: m['month'])
+    for m in result:
+        m['income']  = round(m['income'],  2)
+        m['expense'] = round(m['expense'], 2)
+        # Human-readable label: "Jan 2024"
+        try:
+            dt = datetime.strptime(m['month'], '%Y-%m')
+            m['month'] = dt.strftime('%b %Y')
+        except Exception:
+            pass
+    return result
+
+
+def _find_column(headers: list[str], candidates: list[str]) -> str | None:
+    """Case-insensitive column name matcher."""
+    for h in headers:
+        if h.strip().lower() in [c.lower() for c in candidates]:
+            return h
+    return None
+
+def _parse_structured_bank(rows: list[dict]) -> list[dict]:
+    """
+    Parse a list of dicts (from CSV/Excel) into transactions.
+    Auto-detects date, description, debit, credit, amount, and balance columns.
+    Supports formats:
+      - Separate debit/credit columns (Debit_Exit, Credit_Entry)
+      - Single signed amount column (Amount, Importo)
+      - Italian and English column names
+    """
+    if not rows:
+        return []
+
+    headers = list(rows[0].keys())
+
+    # ── Auto-detect columns ───────────────────────────────────────────────────
+    date_col  = _find_column(headers, ['date','data','datum','fecha','date_transaction','transaction_date','data_operazione','data_valuta'])
+    desc_col  = _find_column(headers, ['description','descrizione','desc','memo','narrative','causale','wording','details','detail','transaction_description'])
+    debit_col = _find_column(headers, ['debit','debit_exit','uscita','addebito','expense','out','withdrawal','debet','ausgabe','charge'])
+    credit_col= _find_column(headers, ['credit','credit_entry','entrata','accredito','income','in','deposit','credit_amount','einnahme'])
+    amount_col= _find_column(headers, ['amount','importo','betrag','importe','montant','valore','net_amount','transaction_amount'])
+    bal_col   = _find_column(headers, ['balance','saldo','kontostand','solde','saldo_contabile'])
+
+    if not date_col:
+        raise ValueError("Could not find a date column. Expected column named 'Date', 'Data', or similar.")
+
+    transactions = []
+    for row in rows:
+        # ── Date ─────────────────────────────────────────────────────────────
+        raw_date = str(row.get(date_col, '') or '').strip()
+        if not raw_date:
+            continue
+        date_str = None
+        for fmt in ['%Y-%m-%d','%d/%m/%Y','%d-%m-%Y','%d.%m.%Y','%Y/%m/%d','%m/%d/%Y','%d/%m/%y','%Y%m%d']:
+            try:
+                date_str = datetime.strptime(raw_date, fmt).strftime('%Y-%m-%d')
+                break
+            except ValueError:
+                pass
+        if not date_str:
+            continue  # skip unparseable dates
+
+        # ── Description ──────────────────────────────────────────────────────
+        desc = str(row.get(desc_col, '') or '').strip() if desc_col else 'Transaction'
+        if not desc:
+            desc = 'Transaction'
+
+        # ── Amount ───────────────────────────────────────────────────────────
+        def to_float(val) -> float:
+            s = str(val or '').strip().replace(' ', '').replace('€','').replace('$','').replace('£','')
+            if not s or s in ('-','—',''):
+                return 0.0
+            # Italian format: 1.234,56 → 1234.56
+            if re.match(r'^\d{1,3}(\.\d{3})*(,\d+)$', s):
+                s = s.replace('.', '').replace(',', '.')
+            else:
+                s = s.replace(',', '.')
+            try:
+                return float(s)
+            except ValueError:
+                return 0.0
+
+        if debit_col and credit_col:
+            # Separate debit/credit columns
+            debit  = to_float(row.get(debit_col,  0))
+            credit = to_float(row.get(credit_col, 0))
+            if credit > 0:
+                amount = credit
+            elif debit > 0:
+                amount = -debit
+            else:
+                continue  # no movement
+        elif amount_col:
+            amount = to_float(row.get(amount_col, 0))
+            if amount == 0:
+                continue
+        else:
+            continue  # can't determine amount
+
+        # ── Balance ──────────────────────────────────────────────────────────
+        balance = to_float(row.get(bal_col, None)) if bal_col else None
+
+        transactions.append({
+            'date':        date_str,
+            'description': desc[:120],
+            'amount':      round(amount, 2),
+            'balance':     round(balance, 2) if balance is not None else None,
+        })
+
+    transactions.sort(key=lambda t: t['date'])
+    return transactions
+
+
+@app.post("/bank/analyze")
+async def bank_analyze(file: UploadFile = File(...)):
+    """
+    Parse a bank statement (CSV, Excel, or PDF) and return transactions + monthly aggregates.
+    CSV and Excel are parsed as structured data (column-aware).
+    PDF falls back to regex text parsing.
+    No session required — results are temporary (not persisted).
+    """
+    ext = ('.' + file.filename.rsplit('.', 1)[-1]).lower() if '.' in file.filename else ''
+    if ext not in {'.pdf', '.csv', '.xlsx', '.xls'}:
+        raise HTTPException(400, "Bank analysis supports PDF, CSV, and Excel files.")
+
+    file_bytes = await file.read()
+    transactions = []
+
+    # ── CSV: structured column parsing ───────────────────────────────────────
+    if ext == '.csv':
+        try:
+            import csv as _csv
+            # Try common delimiters
+            text = file_bytes.decode('utf-8', errors='replace')
+            dialect = _csv.Sniffer().sniff(text[:4096], delimiters=',;\t|')
+            reader = _csv.DictReader(io.StringIO(text), dialect=dialect)
+            rows = list(reader)
+        except Exception:
+            rows = list(_csv.DictReader(io.StringIO(file_bytes.decode('utf-8', errors='replace'))))
+        try:
+            transactions = _parse_structured_bank(rows)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+
+    # ── Excel: structured column parsing ─────────────────────────────────────
+    elif ext in ('.xlsx', '.xls'):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+            ws = wb.active
+            rows_raw = list(ws.iter_rows(values_only=True))
+            wb.close()
+            if not rows_raw:
+                raise HTTPException(422, "Excel file is empty.")
+            headers = [str(h).strip() if h is not None else f'col_{i}' for i, h in enumerate(rows_raw[0])]
+            rows = [dict(zip(headers, r)) for r in rows_raw[1:] if any(c is not None for c in r)]
+            transactions = _parse_structured_bank(rows)
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        except Exception as e:
+            raise HTTPException(422, f"Could not read Excel file: {e}")
+
+    # ── PDF: regex text parsing ───────────────────────────────────────────────
+    else:
+        try:
+            pages_text = _extract_text_from_file(file.filename, file_bytes)
+        except Exception:
+            raise HTTPException(422, "Could not read this PDF.")
+        full_text = "\n".join(text for _, text in pages_text)
+        if not full_text.strip():
+            raise HTTPException(422, "No text found in this PDF. Is it a scanned image?")
+        transactions = _parse_bank_transactions(full_text)
+
+    if not transactions:
+        raise HTTPException(422,
+            "No transactions could be parsed. "
+            "Check that your file has columns for Date, Description, and Debit/Credit amounts.")
+
+    total_income  = round(sum(t['amount'] for t in transactions if t['amount'] >  0), 2)
+    total_expense = round(sum(abs(t['amount']) for t in transactions if t['amount'] < 0), 2)
+    net_balance   = round(total_income - total_expense, 2)
+    monthly       = _aggregate_monthly(transactions)
+
+    # ── Enrich transactions with category ────────────────────────────────────
+    transactions = _detect_categories(transactions)
+
+    # ── Anomaly detection ─────────────────────────────────────────────────────
+    anomalies = _detect_anomalies(transactions)
+
+    # ── Cash-flow prediction (next 3 months) ──────────────────────────────────
+    prediction = _predict_cashflow(monthly)
+
+    # ── Category breakdown ────────────────────────────────────────────────────
+    cat_totals: dict = {}
+    for t in transactions:
+        cat = t.get('category', 'Other')
+        cat_totals[cat] = cat_totals.get(cat, 0.0) + abs(t['amount'])
+    category_breakdown = [
+        {'category': k, 'total': round(v, 2)}
+        for k, v in sorted(cat_totals.items(), key=lambda x: -x[1])
+    ]
+
+    return {
+        "transactions":        transactions,
+        "monthly":             monthly,
+        "total_income":        total_income,
+        "total_expense":       total_expense,
+        "net_balance":         net_balance,
+        "count":               len(transactions),
+        "anomalies":           anomalies,
+        "prediction":          prediction,
+        "category_breakdown":  category_breakdown,
+    }
+
+
+# ── Category detection ─────────────────────────────────────────────────────────
+_CATEGORY_RULES = [
+    # (category, keywords)
+    ('Salary & Payroll',   ['salary','stipendio','payroll','wage','retribuzione','busta paga']),
+    ('Revenue & Sales',    ['revenue','sales','online sales','client payment','invoice','fattura','vendita','ricavo']),
+    ('Consulting',         ['consulting','consulenza','fee received','professional']),
+    ('Rent & Property',    ['rent','affitto','lease','locazione','office rent']),
+    ('Utilities',          ['utilities','utenza','electricity','gas','water','internet','phone','bolletta']),
+    ('Software & Tech',    ['software','subscription','abbonamento','saas','license','licenza','tech']),
+    ('Equipment',          ['equipment','attrezzatura','hardware','machinery','purchase','acquisto']),
+    ('Suppliers',          ['supplier','fornitore','vendor','supply','materiali']),
+    ('Transfers',          ['transfer','trasferimento','partner','bonifico','wire']),
+    ('Refunds & Returns',  ['refund','rimborso','return','restituzione','chargeback']),
+    ('Banking & Fees',     ['fee','commissione','charge','interest','bank','tassa']),
+    ('Tax & Legal',        ['tax','tasse','iva','legal','notary','notaio','imposte']),
+]
+
+def _detect_categories(transactions: list[dict]) -> list[dict]:
+    for t in transactions:
+        desc_lower = t['description'].lower()
+        t['category'] = 'Other'
+        for cat, keywords in _CATEGORY_RULES:
+            if any(kw in desc_lower for kw in keywords):
+                t['category'] = cat
+                break
+    return transactions
+
+
+# ── Anomaly detection ──────────────────────────────────────────────────────────
+def _detect_anomalies(transactions: list[dict]) -> list[dict]:
+    """
+    Flag transactions that are statistical outliers using z-score per category.
+    Also flags: duplicate amounts on same day, unusually round numbers.
+    """
+    import math
+
+    # Z-score per category
+    from collections import defaultdict
+    cat_amounts: dict = defaultdict(list)
+    for t in transactions:
+        cat_amounts[t.get('category','Other')].append(abs(t['amount']))
+
+    cat_stats: dict = {}
+    for cat, vals in cat_amounts.items():
+        if len(vals) < 2:
+            cat_stats[cat] = (0, 0)
+            continue
+        mean = sum(vals) / len(vals)
+        std  = math.sqrt(sum((v - mean)**2 for v in vals) / len(vals))
+        cat_stats[cat] = (mean, std)
+
+    # Global stats as fallback
+    all_abs = [abs(t['amount']) for t in transactions]
+    g_mean  = sum(all_abs) / len(all_abs) if all_abs else 0
+    g_std   = math.sqrt(sum((v - g_mean)**2 for v in all_abs) / len(all_abs)) if all_abs else 1
+
+    # Duplicate detection: same amount + same day
+    seen_day_amounts: dict = defaultdict(list)
+    for t in transactions:
+        seen_day_amounts[(t['date'], abs(t['amount']))].append(t['description'])
+
+    anomalies = []
+    for t in transactions:
+        reasons = []
+        amt = abs(t['amount'])
+        cat = t.get('category', 'Other')
+
+        # Z-score check (global)
+        if g_std > 0:
+            z = (amt - g_mean) / g_std
+            if z > 2.5:
+                reasons.append(f'Unusually large amount (z={z:.1f}σ above average)')
+
+        # Category z-score
+        mean_c, std_c = cat_stats.get(cat, (0, 0))
+        if std_c > 0:
+            z_c = (amt - mean_c) / std_c
+            if z_c > 2.5:
+                reasons.append(f'Large for category "{cat}" (z={z_c:.1f}σ)')
+
+        # Duplicate same-day same-amount
+        key = (t['date'], amt)
+        if len(seen_day_amounts[key]) > 1:
+            reasons.append(f'Duplicate amount on same day ({len(seen_day_amounts[key])}x)')
+
+        # Suspiciously round number (>500 and ends in 000)
+        if amt >= 500 and amt % 1000 == 0:
+            reasons.append('Suspiciously round amount')
+
+        if reasons:
+            anomalies.append({
+                'date':        t['date'],
+                'description': t['description'],
+                'amount':      t['amount'],
+                'category':    cat,
+                'reasons':     reasons,
+                'severity':    'high' if len(reasons) >= 2 else 'medium',
+            })
+
+    return sorted(anomalies, key=lambda x: ('high','medium').index(x['severity']))
+
+
+# ── Cash-flow prediction ───────────────────────────────────────────────────────
+def _predict_cashflow(monthly: list[dict]) -> list[dict]:
+    """
+    Predict next 3 months using weighted linear regression on income & expense.
+    More recent months get higher weight.
+    """
+    from datetime import datetime, timedelta
+    import math
+
+    if len(monthly) < 2:
+        return []
+
+    def parse_month(label: str):
+        for fmt in ['%b %Y','%Y-%m']:
+            try:
+                return datetime.strptime(label, fmt)
+            except ValueError:
+                pass
+        return None
+
+    valid = [(parse_month(m['month']), m['income'], m['expense'])
+             for m in monthly if parse_month(m['month'])]
+    if len(valid) < 2:
+        return []
+
+    valid.sort(key=lambda x: x[0])
+    n = len(valid)
+
+    def weighted_linreg(ys):
+        # Weights: more recent = higher weight (linear ramp)
+        ws = [i + 1 for i in range(n)]
+        xs = list(range(n))
+        sw  = sum(ws)
+        swx = sum(w*x for w,x in zip(ws,xs))
+        swy = sum(w*y for w,y in zip(ws,ys))
+        swxx= sum(w*x*x for w,x in zip(ws,xs))
+        swxy= sum(w*x*y for w,x,y in zip(ws,xs,ys))
+        denom = sw*swxx - swx**2
+        if denom == 0:
+            return swy/sw, 0
+        slope = (sw*swxy - swx*swy) / denom
+        intercept = (swy - slope*swx) / sw
+        return intercept, slope
+
+    inc_vals = [v[1] for v in valid]
+    exp_vals = [v[2] for v in valid]
+    inc_int, inc_slope = weighted_linreg(inc_vals)
+    exp_int, exp_slope = weighted_linreg(exp_vals)
+
+    # Last month date
+    last_dt = valid[-1][0]
+    predictions = []
+    for i in range(1, 4):
+        x = n - 1 + i
+        # Next month
+        if last_dt.month + i <= 12:
+            pred_dt = last_dt.replace(month=last_dt.month + i)
+        else:
+            pred_dt = last_dt.replace(year=last_dt.year + 1, month=(last_dt.month + i) % 12 or 12)
+
+        pred_income  = max(0, round(inc_int + inc_slope * x, 2))
+        pred_expense = max(0, round(exp_int + exp_slope * x, 2))
+        predictions.append({
+            'month':        pred_dt.strftime('%b %Y'),
+            'income':       pred_income,
+            'expense':      pred_expense,
+            'net':          round(pred_income - pred_expense, 2),
+            'predicted':    True,
+        })
+
+    return predictions
+
+
+
+
     stopwords = {
         # English
         'the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','as',

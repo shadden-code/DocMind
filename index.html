@@ -8,6 +8,7 @@
   <meta http-equiv="Expires" content="0"/>
   <title>DocMind</title>
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;600;800&display=swap" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     :root{
@@ -392,6 +393,100 @@
     .server-banner-text strong{color:var(--accent)}
     .server-counter{font-family:var(--mono);font-size:11px;color:var(--accent);background:var(--accent-glow);padding:2px 10px;border-radius:4px;border:1px solid rgba(0,229,192,.2);white-space:nowrap}
     .server-banner.ready .server-counter{display:none}
+    /* ── Bank tab ── */
+    .bank-header{padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+    .bank-upload-row{display:flex;gap:10px;align-items:center}
+    .bank-drop-zone{flex:1;border:1px dashed var(--border-bright);border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;background:var(--accent-glow2);transition:all .2s;min-width:0}
+    .bank-drop-zone:hover,.bank-drop-zone.dragover{border-color:var(--accent);background:var(--accent-glow);box-shadow:0 0 16px var(--accent-glow)}
+    .bank-drop-icon{font-size:18px;flex-shrink:0}
+    .bank-drop-label{font-size:11px;color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .bank-drop-label strong{color:var(--text)}
+    .btn-bank-upload{padding:9px 18px;background:var(--accent);color:#000;border:none;border-radius:6px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;transition:all .2s;white-space:nowrap;flex-shrink:0}
+    .btn-bank-upload:hover{background:var(--text-bright);box-shadow:0 0 20px rgba(0,229,192,.3)}
+    .btn-bank-upload:disabled{opacity:.25;cursor:not-allowed;box-shadow:none}
+    .bank-status{font-size:11px;min-height:14px}.bank-status.ok{color:var(--accent)}.bank-status.err{color:var(--red)}
+    .bank-content{flex:1;overflow-y:auto;padding:20px}
+    .bank-content::-webkit-scrollbar{width:3px}
+    .bank-content::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+    .bank-placeholder{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--muted);text-align:center;font-size:12px;padding:60px 0}
+    .bank-placeholder .big{font-family:var(--sans);font-size:32px;font-weight:800;color:var(--border-bright);letter-spacing:-.03em}
+    .bank-placeholder p{max-width:260px;line-height:1.9;color:var(--muted)}
+    .bank-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+    @media(max-width:900px){.bank-summary-grid{grid-template-columns:repeat(2,1fr)}}
+    .bank-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:5px;min-width:0}
+    .bank-stat-label{font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-family:var(--mono)}
+    .bank-stat-sign{font-size:11px;font-family:var(--mono);font-weight:700;opacity:.7}
+    .bank-stat-amount{font-family:var(--sans);font-size:18px;font-weight:800;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .bank-stat-currency{font-size:12px;font-family:var(--mono);opacity:.6;margin-left:3px}
+    .bank-stat-sub{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:1px}
+    .bank-stat-card.income .bank-stat-sign,.bank-stat-card.income .bank-stat-amount{color:#4ade80}
+    .bank-stat-card.expense .bank-stat-sign,.bank-stat-card.expense .bank-stat-amount{color:var(--red)}
+    .bank-stat-card.balance .bank-stat-sign,.bank-stat-card.balance .bank-stat-amount{color:var(--accent)}
+    .bank-stat-card.txcount .bank-stat-amount{color:var(--blue);font-size:36px}
+    .bank-charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+    @media(max-width:800px){.bank-charts-grid{grid-template-columns:1fr}}
+    .bank-chart-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px}
+    .bank-chart-title{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-family:var(--mono)}
+    .bank-chart-wrap{position:relative;width:100%;height:220px}
+    .bank-txn-section{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+    /* ── Category breakdown ── */
+    .bank-features-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+    @media(max-width:800px){.bank-features-grid{grid-template-columns:1fr}}
+    .bank-feature-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+    .bank-feature-head{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+    .bank-feature-title{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-family:var(--mono);flex:1}
+    .bank-feature-badge{font-size:10px;padding:2px 8px;border-radius:4px;font-family:var(--mono);font-weight:700}
+    .bank-feature-badge.warn{background:rgba(240,180,41,.12);color:var(--yellow);border:1px solid rgba(240,180,41,.3)}
+    .bank-feature-badge.ok{background:var(--accent-glow);color:var(--accent);border:1px solid rgba(0,229,192,.2)}
+    /* Category bars */
+    .bank-cat-list{padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+    .bank-cat-row{display:flex;flex-direction:column;gap:3px}
+    .bank-cat-meta{display:flex;justify-content:space-between;font-size:10px;font-family:var(--mono)}
+    .bank-cat-name{color:var(--text)}
+    .bank-cat-val{color:var(--muted2)}
+    .bank-cat-bar-track{height:4px;background:var(--border-bright);border-radius:2px;overflow:hidden}
+    .bank-cat-bar-fill{height:100%;border-radius:2px;transition:width .6s ease}
+    /* Anomaly list */
+    .bank-anomaly-list{padding:12px 16px;display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto}
+    .bank-anomaly-list::-webkit-scrollbar{width:2px}
+    .bank-anomaly-list::-webkit-scrollbar-thumb{background:var(--border-bright)}
+    .bank-anomaly-row{padding:10px 12px;border-radius:6px;border:1px solid;display:flex;flex-direction:column;gap:4px}
+    .bank-anomaly-row.high{background:rgba(255,77,106,.06);border-color:rgba(255,77,106,.25)}
+    .bank-anomaly-row.medium{background:rgba(240,180,41,.06);border-color:rgba(240,180,41,.2)}
+    .bank-anomaly-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .bank-anomaly-desc{font-size:11px;color:var(--text);font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .bank-anomaly-amt{font-size:11px;font-family:var(--mono);font-weight:700;white-space:nowrap}
+    .bank-anomaly-amt.pos{color:#4ade80}.bank-anomaly-amt.neg{color:var(--red)}
+    .bank-anomaly-date{font-size:10px;color:var(--muted);font-family:var(--mono)}
+    .bank-anomaly-reasons{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+    .bank-anomaly-reason{font-size:9px;padding:2px 7px;border-radius:3px;background:var(--surface2);color:var(--muted2);border:1px solid var(--border-bright)}
+    .bank-no-anomalies{padding:20px 16px;text-align:center;color:var(--accent);font-size:11px;font-family:var(--mono)}
+    /* Prediction chart */
+    .bank-prediction-section{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:24px;overflow:hidden}
+    .bank-prediction-body{padding:16px;display:flex;flex-direction:column;gap:10px}
+    .bank-prediction-note{font-size:10px;color:var(--muted);font-family:var(--mono);font-style:italic}
+    .bank-pred-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    @media(max-width:600px){.bank-pred-cards{grid-template-columns:1fr}}
+    .bank-pred-card{background:var(--surface2);border:1px solid var(--border-bright);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:4px;border-top:2px solid var(--blue)}
+    .bank-pred-month{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-family:var(--mono)}
+    .bank-pred-row{display:flex;justify-content:space-between;font-size:11px;font-family:var(--mono);padding:2px 0}
+    .bank-pred-row span:first-child{color:var(--muted2)}
+    .bank-pred-net{font-size:12px;font-weight:700;font-family:var(--mono);padding-top:4px;border-top:1px solid var(--border)}
+    .bank-pred-net.pos{color:#4ade80}.bank-pred-net.neg{color:var(--red)}
+    .bank-pred-chart-wrap{position:relative;height:180px;margin-top:8px}
+    .bank-txn-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
+    .bank-txn-title{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+    .bank-txn-filter{display:flex;gap:6px}
+    .bank-filter-btn{padding:3px 10px;border-radius:4px;border:1px solid var(--border-bright);background:none;font-family:var(--mono);font-size:10px;color:var(--muted);cursor:pointer;transition:all .15s}
+    .bank-filter-btn.active,.bank-filter-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}
+    .bank-txn-table{width:100%;border-collapse:collapse}
+    .bank-txn-table th{padding:8px 16px;text-align:left;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);background:var(--surface2)}
+    .bank-txn-table td{padding:9px 16px;font-size:11px;border-bottom:1px solid var(--border);color:var(--text)}
+    .bank-txn-table tr:last-child td{border-bottom:none}
+    .bank-txn-table tr:hover td{background:var(--surface2)}
+    .bank-amount.pos{color:#4ade80;font-weight:700}.bank-amount.neg{color:var(--red);font-weight:700}
+    .bank-spinner-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:60px 0;color:var(--muted);font-size:12px}
+    .bank-spinner{width:32px;height:32px;border:2px solid var(--border-bright);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
   </style>
 </head>
 <body>
@@ -418,7 +513,7 @@
     <div class="upload-spinner"></div>
     <div class="upload-overlay-title">Indexing document…</div>
     <div class="upload-progress-steps">
-      <div class="upload-step-row" id="ostep1"><div class="upload-step-dot"></div>Extracting text from PDF</div>
+      <div class="upload-step-row" id="ostep1"><div class="upload-step-dot"></div>Extracting text from file</div>
       <div class="upload-step-row" id="ostep2"><div class="upload-step-dot"></div>Chunking &amp; embedding</div>
       <div class="upload-step-row" id="ostep3"><div class="upload-step-dot"></div>Storing in vector database</div>
       <div class="upload-step-row" id="ostep4"><div class="upload-step-dot"></div>Generating summary &amp; questions</div>
@@ -450,9 +545,9 @@
       ondblclick="document.getElementById('file').click()"
     >
       <div class="upload-icon">📄</div>
-      <div class="upload-label" id="dropLabel"><strong>Click to choose</strong> or drag a PDF</div>
+      <div class="upload-label" id="dropLabel"><strong>Click to choose</strong> or drag a file (PDF, Word, Excel, PPT, CSV, TXT…)</div>
     </div>
-    <input type="file" id="file" accept=".pdf" onchange="onFile(this)"/>
+    <input type="file" id="file" accept=".pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.csv,.txt,.md,.rtf" onchange="onFile(this)"/>
     <button class="btn-upload" id="uploadBtn" onclick="upload()" disabled>↑ Upload &amp; Index</button>
     <div class="upload-status" id="uploadStatus"></div>
 
@@ -476,6 +571,7 @@
       <div class="tab" onclick="switchTab('info')"><span class="tab-icon">📋</span> Summary &amp; Info</div>
       <div class="tab" onclick="switchTab('compare')"><span class="tab-icon">⚖️</span> Compare</div>
       <div class="tab" onclick="switchTab('study')"><span class="tab-icon">📚</span> Study</div>
+      <div class="tab" onclick="switchTab('bank')"><span class="tab-icon">🏦</span> Bank</div>
     </div>
 
     <!-- ── CHAT TAB ── -->
@@ -506,7 +602,7 @@
       <div class="chat-messages" id="chat">
         <div class="empty-chat" id="emptyChat">
           <div class="big">Ask anything.</div>
-          <p>Upload a PDF, then ask questions. Use the mic button for voice input.</p>
+          <p>Upload a document (PDF, Word, Excel, PPT, CSV, TXT…), then ask questions. Use the mic button for voice input.</p>
         </div>
       </div>
 
@@ -607,6 +703,28 @@
       </div>
     </div>
 
+    <!-- ── BANK TAB ── -->
+    <div class="tab-panel" id="panel-bank">
+      <div class="bank-header">
+        <div class="bank-upload-row">
+          <div class="bank-drop-zone" id="bankDropZone" onclick="document.getElementById('bankFile').click()">
+            <span class="bank-drop-icon">🏦</span>
+            <span class="bank-drop-label" id="bankDropLabel"><strong>Click to choose</strong> or drag a bank statement (PDF, CSV, Excel)</span>
+          </div>
+          <input type="file" id="bankFile" accept=".pdf,.csv,.xlsx,.xls" style="display:none" onchange="onBankFile(this)"/>
+          <button class="btn-bank-upload" id="bankUploadBtn" onclick="uploadBank()" disabled>↑ Analyze Statement</button>
+        </div>
+        <div class="bank-status" id="bankStatus"></div>
+      </div>
+
+      <div class="bank-content" id="bankContent">
+        <div class="bank-placeholder">
+          <div class="big">Bank Analysis</div>
+          <p>Upload a bank statement (PDF, CSV, or Excel) to visualize your transactions.</p>
+        </div>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -641,7 +759,7 @@ let recognition= null;
 // ── Tabs ───────────────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t,i)=>{
-    const names=['chat','search','info','compare','study'];
+    const names=['chat','search','info','compare','study','bank'];
     t.classList.toggle('active', names[i]===name);
   });
   document.querySelectorAll('.tab-panel').forEach(p=>{
@@ -656,7 +774,7 @@ function onFile(input) {
   const name = input.files[0]?.name;
   document.getElementById('dropLabel').innerHTML = name
     ? `<strong>${name}</strong> — click Upload to index`
-    : '<strong>Click to choose</strong> or drag a PDF';
+    : '<strong>Click to choose</strong> or drag a file (PDF, Word, Excel, PPT, CSV, TXT…)';
   document.getElementById('uploadBtn').disabled = !name;
   document.getElementById('uploadStatus').textContent = '';
 }
@@ -698,7 +816,7 @@ function confirmCancel() {
   _pendingSwapId = null; _pendingFile = null;
   document.getElementById('confirmOverlay').classList.remove('show');
   document.getElementById('file').value = '';
-  document.getElementById('dropLabel').innerHTML = '<strong>Click to choose</strong> or drag a PDF';
+  document.getElementById('dropLabel').innerHTML = '<strong>Click to choose</strong> or drag a file (PDF, Word, Excel, PPT, CSV, TXT…)';
   document.getElementById('uploadBtn').disabled = true;
 }
 
@@ -756,7 +874,7 @@ async function doUpload(file) {
     document.getElementById('sessionNotice').classList.add('show');
     document.getElementById('btnClearSession').classList.add('show');
     document.getElementById('file').value = '';
-    document.getElementById('dropLabel').innerHTML = '<strong>Click to choose</strong> or drag a PDF';
+    document.getElementById('dropLabel').innerHTML = '<strong>Click to choose</strong> or drag a file (PDF, Word, Excel, PPT, CSV, TXT…)';
   } catch(e) {
     status.textContent = `✗ ${e.message}`;
     status.className = 'upload-status err';
@@ -787,7 +905,10 @@ function renderDocs() {
   Object.entries(docs).forEach(([id, doc]) => {
     const row = document.createElement('div');
     row.className = 'doc-row' + (id === activeId ? ' active' : '');
-    const icon = document.createElement('span'); icon.className = 'doc-icon'; icon.textContent = '📄';
+    const icon = document.createElement('span'); icon.className = 'doc-icon';
+    const ext = (doc.name||'').split('.').pop().toLowerCase();
+    const iconMap = {pdf:'📄',docx:'📝',doc:'📝',pptx:'📊',ppt:'📊',xlsx:'📈',xls:'📈',csv:'📋',txt:'📃',md:'📃'};
+    icon.textContent = iconMap[ext] || '📄';
     const info = document.createElement('div'); info.className = 'doc-info';
     const name = document.createElement('div'); name.className = 'doc-name'; name.title = doc.name; name.textContent = doc.name;
     const meta = document.createElement('div'); meta.className = 'doc-meta'; meta.textContent = `${doc.chunks} chunks · ${doc.pages||'?'} pages`;
@@ -1493,11 +1614,404 @@ async function clearSession(){
   renderDocs(); updateCompareSelects(); updateSearchFilterDocs();
   document.getElementById('sessionNotice').classList.remove('show');
   document.getElementById('btnClearSession').classList.remove('show');
-  document.getElementById('chat').innerHTML = '<div class="empty-chat" id="emptyChat"><div class="big">Ask anything.</div><p>Upload a PDF, then ask questions.</p></div>';
+  document.getElementById('chat').innerHTML = '<div class="empty-chat" id="emptyChat"><div class="big">Ask anything.</div><p>Upload a document, then ask questions.</p></div>';
   document.getElementById('summaryStrip').classList.remove('show');
   document.getElementById('qaSection').classList.remove('show');
   history = []; lastQ = ''; updateHistUI();
 }
+// ── Bank Tab ───────────────────────────────────────────────────────────────
+let _bankChartLine = null;
+let _bankChartBar  = null;
+let _bankTxns      = [];
+let _bankFilter    = 'all';
+
+function onBankFile(input) {
+  const name = input.files[0]?.name;
+  document.getElementById('bankDropLabel').innerHTML = name
+    ? `<strong>${name}</strong> — ready to analyze`
+    : '<strong>Click to choose</strong> or drag a bank statement (PDF, CSV, Excel)';
+  document.getElementById('bankUploadBtn').disabled = !name;
+  document.getElementById('bankStatus').textContent = '';
+}
+
+// Drag & drop for bank zone
+(function(){
+  const zone = document.getElementById('bankDropZone');
+  if(!zone) return;
+  zone.addEventListener('dragover', e=>{ e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', ()=>zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e=>{
+    e.preventDefault(); zone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    const allowed = ['.pdf','.csv','.xlsx','.xls'];
+    const fext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase();
+    if(f && allowed.includes(fext)){
+      const dt=new DataTransfer(); dt.items.add(f);
+      const inp=document.getElementById('bankFile'); inp.files=dt.files; onBankFile(inp);
+    }
+  });
+})();
+
+async function uploadBank() {
+  const file = document.getElementById('bankFile').files[0];
+  if(!file) return;
+  const btn = document.getElementById('bankUploadBtn');
+  const status = document.getElementById('bankStatus');
+  const content = document.getElementById('bankContent');
+  btn.disabled = true;
+  status.textContent = '';
+  content.innerHTML = `<div class="bank-spinner-wrap"><div class="bank-spinner"></div><span>Parsing bank statement…</span></div>`;
+  try {
+    const fd = new FormData(); fd.append('file', file);
+    const r = await fetch(`${API}/bank/analyze`, {method:'POST', body:fd, credentials:'include'});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || 'Analysis failed');
+    _bankTxns = d.transactions || [];
+    _bankFilter = 'all';
+    status.textContent = `✓ Parsed ${_bankTxns.length} transactions`;
+    status.className = 'bank-status ok';
+    renderBankDashboard(d);
+  } catch(e) {
+    status.textContent = `✗ ${e.message}`;
+    status.className = 'bank-status err';
+    content.innerHTML = `<div class="bank-placeholder"><div class="big">Error</div><p>${esc(e.message)}</p></div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderBankDashboard(d) {
+  const content  = document.getElementById('bankContent');
+  const totalIn  = d.total_income  || 0;
+  const totalOut = d.total_expense || 0;
+  const balance  = d.net_balance   || 0;
+  const count    = _bankTxns.length;
+  const anomCount= (d.anomalies||[]).length;
+
+  content.innerHTML = `
+    <div class="bank-summary-grid">
+      <div class="bank-stat-card income">
+        <div class="bank-stat-label">Total Income</div>
+        <div class="bank-stat-sign">▲ incoming</div>
+        <div class="bank-stat-amount">${fmtNum(totalIn)}<span class="bank-stat-currency">€</span></div>
+      </div>
+      <div class="bank-stat-card expense">
+        <div class="bank-stat-label">Total Expenses</div>
+        <div class="bank-stat-sign">▼ outgoing</div>
+        <div class="bank-stat-amount">${fmtNum(totalOut)}<span class="bank-stat-currency">€</span></div>
+      </div>
+      <div class="bank-stat-card balance">
+        <div class="bank-stat-label">Net Balance</div>
+        <div class="bank-stat-sign">${balance>=0?'▲ surplus':'▼ deficit'}</div>
+        <div class="bank-stat-amount">${fmtNum(balance)}<span class="bank-stat-currency">€</span></div>
+      </div>
+      <div class="bank-stat-card txcount">
+        <div class="bank-stat-label">Transactions</div>
+        <div class="bank-stat-amount">${count}</div>
+        <div class="bank-stat-sub">entries parsed</div>
+      </div>
+    </div>
+
+    <div class="bank-charts-grid">
+      <div class="bank-chart-card">
+        <div class="bank-chart-title">📈 Balance Over Time</div>
+        <div class="bank-chart-wrap"><canvas id="bankLineChart"></canvas></div>
+      </div>
+      <div class="bank-chart-card">
+        <div class="bank-chart-title">📊 Income vs Expenses by Month</div>
+        <div class="bank-chart-wrap"><canvas id="bankBarChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="bank-prediction-section">
+      <div class="bank-feature-head">
+        <div class="bank-feature-title">📈 Cash-flow Prediction — Next 3 Months</div>
+        <div class="bank-feature-badge ok">Weighted Linear Regression</div>
+      </div>
+      <div class="bank-prediction-body">
+        <div class="bank-pred-cards" id="bankPredCards"></div>
+        <div class="bank-pred-chart-wrap"><canvas id="bankPredChart"></canvas></div>
+        <div class="bank-prediction-note">⚠ Predictions are estimates based on historical trends. Actual results may vary.</div>
+      </div>
+    </div>
+
+    <div class="bank-features-grid">
+      <div class="bank-feature-card">
+        <div class="bank-feature-head">
+          <div class="bank-feature-title">🏷️ Expense Categories</div>
+        </div>
+        <div class="bank-cat-list" id="bankCatList"></div>
+      </div>
+      <div class="bank-feature-card">
+        <div class="bank-feature-head">
+          <div class="bank-feature-title">🚨 Anomaly Detection</div>
+          <div class="bank-feature-badge ${anomCount>0?'warn':'ok'}" id="bankAnomalyBadge">${anomCount>0?anomCount+' flagged':'All clear'}</div>
+        </div>
+        <div class="bank-anomaly-list" id="bankAnomalyList"></div>
+      </div>
+    </div>
+
+    <div class="bank-txn-section">
+      <div class="bank-txn-head">
+        <div class="bank-txn-title">Transactions</div>
+        <div class="bank-txn-filter">
+          <button class="bank-filter-btn active" id="bfAll"  onclick="setBankFilter('all')">All</button>
+          <button class="bank-filter-btn"        id="bfIn"   onclick="setBankFilter('income')">Income</button>
+          <button class="bank-filter-btn"        id="bfOut"  onclick="setBankFilter('expense')">Expenses</button>
+        </div>
+      </div>
+      <div id="bankTxnBody"></div>
+    </div>
+  `;
+
+  renderBankCharts(d.monthly || []);
+  renderBankPrediction(d.prediction || [], d.monthly || []);
+  renderBankCategories(d.category_breakdown || []);
+  renderBankAnomalies(d.anomalies || []);
+  renderBankTxnTable();
+}
+
+
+function renderBankPrediction(prediction, monthly) {
+  const cards = document.getElementById('bankPredCards');
+  if(!cards) return;
+  if(!prediction.length){ cards.innerHTML='<div style="color:var(--muted);font-size:11px;font-family:var(--mono)">Not enough data for prediction (need ≥ 2 months).</div>'; return; }
+  cards.innerHTML = prediction.map(p=>`
+    <div class="bank-pred-card">
+      <div class="bank-pred-month">${esc(p.month)}</div>
+      <div class="bank-pred-row"><span>Income</span><span style="color:#4ade80">${fmtEurCompact(p.income)}</span></div>
+      <div class="bank-pred-row"><span>Expenses</span><span style="color:var(--red)">${fmtEurCompact(p.expense)}</span></div>
+      <div class="bank-pred-net ${p.net>=0?'pos':'neg'}">${p.net>=0?'▲ ':'▼ '}${fmtEurCompact(p.net)}</div>
+    </div>`).join('');
+
+  // Combo chart: historical bars + predicted dashed line
+  const allMonths  = [...monthly, ...prediction];
+  const labels     = allMonths.map(m=>m.month);
+  const histInc    = monthly.map(m=>m.income);
+  const histExp    = monthly.map(m=>m.expense);
+  const predInc    = [...Array(monthly.length).fill(null), ...prediction.map(p=>p.income)];
+  const predExp    = [...Array(monthly.length).fill(null), ...prediction.map(p=>p.expense)];
+  // Bridge point: connect last historical to first predicted
+  if(monthly.length > 0){
+    predInc[monthly.length-1] = monthly[monthly.length-1].income;
+    predExp[monthly.length-1] = monthly[monthly.length-1].expense;
+  }
+
+  const gc = 'rgba(255,255,255,0.04)', tc = '#4a5568', ff = "'Space Mono',monospace";
+  const ctx = document.getElementById('bankPredChart').getContext('2d');
+  new Chart(ctx, {
+    type:'bar',
+    data:{ labels, datasets:[
+      {label:'Income (actual)',  data:[...histInc,...Array(prediction.length).fill(null)], backgroundColor:'rgba(74,222,128,0.7)', borderRadius:3},
+      {label:'Expenses (actual)',data:[...histExp,...Array(prediction.length).fill(null)], backgroundColor:'rgba(255,77,106,0.7)',  borderRadius:3},
+      {label:'Income (pred)',    data:predInc, type:'line', borderColor:'#4ade80', borderDash:[5,4], borderWidth:2, pointRadius:4, pointBackgroundColor:'#4ade80', backgroundColor:'transparent', tension:0.3},
+      {label:'Expenses (pred)',  data:predExp, type:'line', borderColor:'#ff4d6a', borderDash:[5,4], borderWidth:2, pointRadius:4, pointBackgroundColor:'#ff4d6a', backgroundColor:'transparent', tension:0.3},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:{duration:500},
+      plugins:{legend:{labels:{color:tc,font:{family:ff,size:9},boxWidth:10}},
+        tooltip:{backgroundColor:'#13161b',borderColor:'#2a3340',borderWidth:1,titleColor:'#c8d6e5',bodyColor:'#c8d6e5',
+          callbacks:{label:ctx=>ctx.parsed.y!=null?` ${ctx.dataset.label}: ${fmtEur(ctx.parsed.y)}`:null}}},
+      scales:{
+        x:{ticks:{color:tc,font:{family:ff,size:9},maxRotation:0},grid:{color:gc}},
+        y:{ticks:{color:tc,font:{family:ff,size:9},callback:v=>fmtEurCompact(v)},grid:{color:gc}}
+      }
+    }
+  });
+}
+
+function renderBankCategories(breakdown) {
+  const el = document.getElementById('bankCatList');
+  if(!el) return;
+  if(!breakdown.length){ el.innerHTML='<div style="padding:16px;color:var(--muted);font-size:11px">No categories detected.</div>'; return; }
+  const max = breakdown[0].total;
+  const colors = ['#00e5c0','#4d9fff','#4ade80','#f0b429','#a78bfa','#fb923c','#f472b6','#34d399','#60a5fa','#fbbf24'];
+  el.innerHTML = breakdown.map((c,i)=>`
+    <div class="bank-cat-row">
+      <div class="bank-cat-meta">
+        <span class="bank-cat-name">${esc(c.category)}</span>
+        <span class="bank-cat-val">${fmtEur(c.total)}</span>
+      </div>
+      <div class="bank-cat-bar-track">
+        <div class="bank-cat-bar-fill" style="width:${(c.total/max*100).toFixed(1)}%;background:${colors[i%colors.length]}"></div>
+      </div>
+    </div>`).join('');
+}
+
+function renderBankAnomalies(anomalies) {
+  const el = document.getElementById('bankAnomalyList');
+  if(!el) return;
+  if(!anomalies.length){
+    el.innerHTML='<div class="bank-no-anomalies">✓ No anomalies detected across all transactions</div>';
+    return;
+  }
+  el.innerHTML = anomalies.map(a=>`
+    <div class="bank-anomaly-row ${a.severity}">
+      <div class="bank-anomaly-top">
+        <div class="bank-anomaly-desc">${esc(a.description)}</div>
+        <div class="bank-anomaly-amt ${a.amount>=0?'pos':'neg'}">${a.amount>=0?'+ ':'− '}${fmtEur(a.amount)}</div>
+      </div>
+      <div class="bank-anomaly-date">${esc(a.date)} · ${esc(a.category)}</div>
+      <div class="bank-anomaly-reasons">${a.reasons.map(r=>`<span class="bank-anomaly-reason">${esc(r)}</span>`).join('')}</div>
+    </div>`).join('');
+}
+
+function fmtNum(n){
+  // Number only, no € — dot thousands, comma decimal (de-DE)
+  return new Intl.NumberFormat('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2}).format(Math.abs(n));
+}
+function fmtEur(n){
+  return fmtNum(n) + ' €';
+}
+function fmtEurCompact(n){
+  const abs = Math.abs(n);
+  if(abs >= 1_000_000) return (n/1_000_000).toFixed(1).replace('.',',') + 'M €';
+  if(abs >= 1_000)     return (n/1_000).toFixed(1).replace('.',',') + 'K €';
+  return fmtEur(n);
+}
+
+function renderBankCharts(monthly) {
+  const gridColor  = 'rgba(255,255,255,0.04)';
+  const tickColor  = '#4a5568';
+  const fontFamily = "'Space Mono', monospace";
+  const fontSize   = 10;
+
+  // ── Line chart: one point per transaction, using real Balance column ────
+  const sorted = [..._bankTxns].sort((a,b)=>new Date(a.date)-new Date(b.date));
+
+  let lineLabels, lineData;
+  if (sorted.length > 0 && sorted[0].balance != null) {
+    // Use real balance column — one point per transaction
+    lineLabels = sorted.map((t,i) => i === 0 || t.date !== sorted[i-1].date ? t.date : '');
+    lineData   = sorted.map(t => t.balance);
+  } else {
+    // Fallback: compute running balance
+    let bal = 0;
+    lineLabels = sorted.map((t,i) => i === 0 || t.date !== sorted[i-1].date ? t.date : '');
+    lineData   = sorted.map(t => { bal += t.amount; return +bal.toFixed(2); });
+  }
+
+  if(_bankChartLine){ _bankChartLine.destroy(); _bankChartLine=null; }
+  const ctxL = document.getElementById('bankLineChart').getContext('2d');
+  const gradL = ctxL.createLinearGradient(0,0,0,220);
+  gradL.addColorStop(0,'rgba(0,229,192,0.20)');
+  gradL.addColorStop(1,'rgba(0,229,192,0.00)');
+  _bankChartLine = new Chart(ctxL, {
+    type:'line',
+    data:{
+      labels: lineLabels,
+      datasets:[{
+        label:'Balance',
+        data: lineData,
+        borderColor:'#00e5c0',
+        borderWidth:1.5,
+        backgroundColor: gradL,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointHoverBackgroundColor:'#00e5c0',
+        tension:0.1,
+        fill:true,
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      animation:{duration:600},
+      plugins:{legend:{display:false},tooltip:{
+        backgroundColor:'#13161b',borderColor:'#2a3340',borderWidth:1,
+        titleColor:'#c8d6e5',bodyColor:'#00e5c0',
+        callbacks:{
+          title: ctx => {
+            const i = ctx[0].dataIndex;
+            return sorted[i]?.date + (sorted[i]?.description ? ' · ' + sorted[i].description : '');
+          },
+          label: ctx => ' Balance: ' + fmtEur(ctx.parsed.y)
+        }
+      }},
+      scales:{
+        x:{ticks:{color:tickColor,font:{family:fontFamily,size:fontSize},maxTicksLimit:10,maxRotation:0},grid:{color:gridColor}},
+        y:{ticks:{color:tickColor,font:{family:fontFamily,size:fontSize},callback:v=>fmtEurCompact(v)},grid:{color:gridColor}},
+      }
+    }
+  });
+
+  // ── Bar chart: all months, scrollable wrapper ─────────────────────────
+  const labels   = monthly.map(m => m.month);
+  const incomes  = monthly.map(m => m.income);
+  const expenses = monthly.map(m => m.expense);
+  const barMinWidth = Math.max(labels.length * 60, 400);
+
+  // Make the chart wrap horizontally scrollable
+  const barWrap = document.querySelector('#bankBarChart').parentElement;
+  barWrap.style.overflowX = 'auto';
+  barWrap.style.overflowY = 'hidden';
+  const barCanvas = document.getElementById('bankBarChart');
+  barCanvas.style.minWidth = barMinWidth + 'px';
+  barCanvas.style.width    = barMinWidth + 'px';
+
+  if(_bankChartBar){ _bankChartBar.destroy(); _bankChartBar=null; }
+  const ctxB = barCanvas.getContext('2d');
+  _bankChartBar = new Chart(ctxB, {
+    type:'bar',
+    data:{
+      labels,
+      datasets:[
+        {label:'Income',  data:incomes,  backgroundColor:'rgba(74,222,128,0.8)', borderRadius:4},
+        {label:'Expenses',data:expenses, backgroundColor:'rgba(255,77,106,0.8)',  borderRadius:4},
+      ]
+    },
+    options:{
+      responsive:false,
+      maintainAspectRatio:false,
+      animation:{duration:600},
+      plugins:{
+        legend:{labels:{color:'#6b7a8d',font:{family:fontFamily,size:10},boxWidth:10}},
+        tooltip:{backgroundColor:'#13161b',borderColor:'#2a3340',borderWidth:1,titleColor:'#c8d6e5',bodyColor:'#c8d6e5',
+          callbacks:{label: ctx=>` ${ctx.dataset.label}: ${fmtEur(ctx.parsed.y)}`}}
+      },
+      scales:{
+        x:{ticks:{color:tickColor,font:{family:fontFamily,size:fontSize},maxRotation:0},grid:{color:gridColor}},
+        y:{ticks:{color:tickColor,font:{family:fontFamily,size:fontSize},callback:v=>fmtEurCompact(v)},grid:{color:gridColor}},
+      }
+    }
+  });
+}
+
+function setBankFilter(f){
+  _bankFilter = f;
+  document.querySelectorAll('.bank-filter-btn').forEach(b=>b.classList.remove('active'));
+  const map={all:'bfAll',income:'bfIn',expense:'bfOut'};
+  document.getElementById(map[f]).classList.add('active');
+  renderBankTxnTable();
+}
+
+function renderBankTxnTable(){
+  const filtered = _bankFilter==='all' ? _bankTxns
+    : _bankFilter==='income' ? _bankTxns.filter(t=>t.amount>0)
+    : _bankTxns.filter(t=>t.amount<0);
+  const body = document.getElementById('bankTxnBody');
+  if(!body) return;
+  if(!filtered.length){
+    body.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px">No transactions found.</div>';
+    return;
+  }
+  const rows = filtered.slice(0,200).map(t=>`
+    <tr>
+      <td>${esc(t.date||'—')}</td>
+      <td>${esc(t.description||'—')}</td>
+      <td class="bank-amount ${t.amount>=0?'pos':'neg'}">${t.amount>=0?'+ ':'− '}${fmtEur(t.amount)}</td>
+    </tr>
+  `).join('');
+  body.innerHTML=`<table class="bank-txn-table">
+    <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th></tr></thead>
+    <tbody>${filtered.slice(0,200).map(t=>`
+    <tr>
+      <td>${esc(t.date||'—')}</td>
+      <td>${esc(t.description||'—')}</td>
+      <td style="color:var(--muted2);font-size:10px">${esc(t.category||'—')}</td>
+      <td class="bank-amount ${t.amount>=0?'pos':'neg'}">${t.amount>=0?'+ ':'− '}${fmtEur(t.amount)}</td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
 </script>
-</body>
 </html>
