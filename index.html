@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+  <meta http-equiv="Pragma" content="no-cache"/>
+  <meta http-equiv="Expires" content="0"/>
   <title>DocMind</title>
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;600;800&display=swap" rel="stylesheet"/>
   <style>
@@ -608,7 +611,13 @@
 </div>
 
 <script>
-const API = window.location.origin === 'null' || window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost' ? 'http://127.0.0.1:8000' : window.location.origin;
+// API URL: always use same origin (works locally and on Render)
+const API = (() => {
+  const origin = window.location.origin;
+  // If opened as a file (no server), fall back to localhost
+  if (!origin || origin === 'null' || origin === 'file://') return 'http://127.0.0.1:8000';
+  return origin;
+})();
 let docs       = {};
 let activeId   = null;
 let history    = [];
