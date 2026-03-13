@@ -10,6 +10,7 @@ from rank_bm25 import BM25Okapi
 # Heavy ML imports are deferred to background thread to avoid Render port timeout
 # HuggingFaceEmbeddings, CrossEncoder, RecursiveCharacterTextSplitter loaded lazily
 import os
+import gc
 import chromadb
 import uuid, re
 from pathlib import Path
@@ -34,8 +35,11 @@ import threading
 
 def _load_embeddings():
     global embeddings, splitter
+    if embeddings is not None:
+        return  # already loaded, prevent duplicate loading
     print("[DocMind] Loading ML dependencies in background...")
     # Import heavy libraries only now (avoids slow startup / Render port timeout)
+    import gc
     from transformers import logging as hf_logging
     hf_logging.set_verbosity_error()
     from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -43,8 +47,9 @@ def _load_embeddings():
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-MiniLM-L6-v2",
-        encode_kwargs={"batch_size": 16, "normalize_embeddings": True},
+        encode_kwargs={"batch_size": 8, "normalize_embeddings": True},
     )
+    gc.collect()  # free unused memory after model load
     print("[DocMind] Embeddings loaded ✓")
 
 @app.on_event("startup")
@@ -58,9 +63,20 @@ app.add_middleware(
 # Serve style.css, script.js and any other static assets from the project folder
 app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
 
+@app.get("/health")
+def health():
+    """Used by frontend to poll until server is ready."""
+    if embeddings is None or splitter is None:
+        from fastapi.responses import JSONResponse as JR
+        return JR({"ready": False, "message": "Loading AI models…"}, status_code=503)
+    return {"ready": True, "message": "Server ready"}
+
 @app.get("/")
 def serve_ui():
-    return FileResponse(BASE_DIR / "index.html")
+    return FileResponse(
+        BASE_DIR / "index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+    )
 
 # splitter is initialised in _load_embeddings() background thread
 splitter = None
@@ -357,7 +373,7 @@ async def upload(file: UploadFile = File(...), session_id: str = Cookie(default=
             all_meta.append({"doc_id": doc_id, "page": page_num})
 
     # Embed chunks in batches — kept small to stay under 512 MB on Render free tier
-    _EMBED_BATCH = 16
+    _EMBED_BATCH = 8
     all_vectors = []
     for start in range(0, len(all_chunks), _EMBED_BATCH):
         batch = all_chunks[start: start + _EMBED_BATCH]
@@ -845,7 +861,7 @@ def _query(question: str, doc_id: str | None, n: int, session: dict) -> dict:
       6. Return top-n passages + best as answer seed
     """
     session_db = session["db"]
-    CANDIDATES = min(10, session_db.count())
+    CANDIDATES = min(6, session_db.count())
 
     # ── Step 1: Query rewriting ───────────────────────────────────────────────
     rewritten = _rewrite_query(question)

@@ -377,6 +377,18 @@
     .btn-clear-session{width:calc(100% - 24px);margin:4px 12px 0;padding:7px;background:none;border:1px solid var(--border-bright);border-radius:6px;font-family:var(--mono);font-size:10px;color:var(--muted);cursor:pointer;transition:all .15s;letter-spacing:.04em;display:none}
     .btn-clear-session:hover{border-color:var(--red);color:var(--red)}
     .btn-clear-session.show{display:block}
+    /* ── Server ready banner ── */
+    .server-banner{position:fixed;top:52px;left:0;right:0;z-index:500;background:var(--surface2);border-bottom:1px solid var(--border-bright);padding:10px 20px;display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text);transition:all .3s}
+    .server-banner.hidden{display:none}
+    .server-banner.ready{background:rgba(0,229,192,.08);border-color:rgba(0,229,192,.3)}
+    .server-spinner{width:14px;height:14px;border:2px solid var(--border-bright);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+    .server-banner.ready .server-spinner{display:none}
+    .server-ready-icon{display:none;color:var(--accent);font-size:14px;flex-shrink:0}
+    .server-banner.ready .server-ready-icon{display:block}
+    .server-banner-text{flex:1}
+    .server-banner-text strong{color:var(--accent)}
+    .server-counter{font-family:var(--mono);font-size:11px;color:var(--accent);background:var(--accent-glow);padding:2px 10px;border-radius:4px;border:1px solid rgba(0,229,192,.2);white-space:nowrap}
+    .server-banner.ready .server-counter{display:none}
   </style>
 </head>
 <body>
@@ -385,6 +397,16 @@
   <div class="topbar-logo">Doc<em>Mind</em></div>
   <div class="topbar-sep"></div>
   <div class="topbar-sub">RAG · Document Intelligence</div>
+</div>
+
+<!-- Server loading banner -->
+<div class="server-banner" id="serverBanner">
+  <div class="server-spinner"></div>
+  <div class="server-ready-icon">✓</div>
+  <div class="server-banner-text" id="serverBannerText">
+    Server is loading AI models, please wait before uploading…
+  </div>
+  <div class="server-counter" id="serverCounter">checking…</div>
 </div>
 
 <!-- Upload loading overlay -->
@@ -1394,6 +1416,63 @@ function renderMarkdown(text){
 
 function resize(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
 function onKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); ask(); } }
+
+// ── Server readiness polling ──────────────────────────────────────────────
+let _serverReady = false;
+let _pollInterval = null;
+let _waitSeconds = 0;
+
+async function checkServerReady() {
+  try {
+    const r = await fetch(`${API}/health`, {credentials:'include'});
+    const d = await r.json();
+    if (r.ok && d.ready) {
+      _serverReady = true;
+      clearInterval(_pollInterval);
+      // Update banner to ready state
+      const banner = document.getElementById('serverBanner');
+      const text = document.getElementById('serverBannerText');
+      banner.classList.add('ready');
+      text.innerHTML = '<strong>✓ Server ready</strong> — you can now upload documents';
+      document.getElementById('uploadBtn').disabled = !document.getElementById('file').files[0];
+      // Hide banner after 3 seconds
+      setTimeout(() => banner.classList.add('hidden'), 3000);
+    } else if (r.status === 503) {
+      _waitSeconds++;
+      updateServerCounter();
+    }
+  } catch(_) {
+    _waitSeconds++;
+    updateServerCounter();
+  }
+}
+
+function updateServerCounter() {
+  const counter = document.getElementById('serverCounter');
+  const text = document.getElementById('serverBannerText');
+  counter.textContent = `${_waitSeconds}s elapsed`;
+  if (_waitSeconds < 30) {
+    text.textContent = 'Server is loading AI models, please wait before uploading…';
+  } else if (_waitSeconds < 60) {
+    text.textContent = 'Almost ready, AI models are large and take ~60s to load…';
+  } else {
+    text.textContent = `Still loading… (${_waitSeconds}s) — hang tight!`;
+  }
+}
+
+// Start polling immediately, every 3 seconds
+_pollInterval = setInterval(checkServerReady, 3000);
+checkServerReady(); // check immediately on load
+
+// Disable upload button until server is ready
+document.getElementById('uploadBtn').disabled = true;
+
+// Override onFile to keep button disabled if server not ready
+const _origOnFile = onFile;
+window.onFile = function(input) {
+  _origOnFile(input);
+  if (!_serverReady) document.getElementById('uploadBtn').disabled = true;
+};
 
 // ── Session management ─────────────────────────────────────────────────────
 async function clearSession(){
